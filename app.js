@@ -1086,18 +1086,33 @@ function indicadores() {
   const d = conPrecioVivo(ana.d, 86400);
   const w = conPrecioVivo(ana.w, 604800);
   const hoy = d[d.length - 1];
+  const ayer = d[d.length - 2];
   const cd = d.map((x) => x.close);
   const cw = w.map((x) => x.close);
   const m20 = mediaUltimos(cd, 20);
   let q = 0;
   for (let i = cd.length - 20; i < cd.length; i++) q += (cd[i] - m20) * (cd[i] - m20);
   const sd = Math.sqrt(q / 20);
-  const volPrevios = d.slice(-21, -1).map((x) => x.vol);
-  const volMedia = volPrevios.reduce((s, x) => s + x, 0) / volPrevios.length;
+  const volMedia = mediaUltimos(d.map((x) => x.vol), 20);
+  let atr = 0;
+  for (let i = 1; i < d.length; i++) {
+    const tr = Math.max(d[i].high - d[i].low, Math.abs(d[i].high - d[i - 1].close), Math.abs(d[i].low - d[i - 1].close));
+    if (i <= 14) {
+      atr += tr;
+      if (i === 14) atr /= 14;
+    } else {
+      atr = (atr * 13 + tr) / 14;
+    }
+  }
+  const ahora = Date.now() / 1000;
+  const semanasCerradas = ana.w.filter((x) => x.time + 604800 <= ahora);
+  const cwc = semanasCerradas.map((x) => x.close);
+  const ultimaSemana = semanasCerradas[semanasCerradas.length - 1];
   let max182 = 0;
   for (const x of d.slice(-182)) if (x.high > max182) max182 = x.high;
   return {
     hoy: hoy,
+    ayer: ayer,
     rsiD: rsiWilder(cd, 14),
     rsiW: rsiWilder(cw, 14),
     bbSup: m20 + 2 * sd,
@@ -1105,34 +1120,59 @@ function indicadores() {
     bbInf: m20 - 2 * sd,
     volRel: hoy.vol / volMedia,
     volMedia: volMedia,
+    atr: atr,
     ma200d: mediaUltimos(cd, 200),
-    ma20w: mediaUltimos(cw, 20),
-    ma200w: mediaUltimos(cw, 200),
+    ma20w: mediaUltimos(cwc, 20),
+    ma200w: mediaUltimos(cwc, 200),
+    cierreSemana: ultimaSemana ? ultimaSemana.close : NaN,
     max182: max182,
     retroceso: (1 - hoy.low / max182) * 100
   };
 }
 
+// Réplica de evaluate2 y verdict2 del widget de Scriptable (modelo v2).
 function evaluarSenal(ind) {
   const v = ind.hoy;
+  const margen = 0.5 * ind.atr;
   const rango = v.high - v.low;
-  const cuerpo = Math.abs(v.close - v.open);
+  const cuerpo = Math.abs(v.open - v.close);
   const mecha = Math.min(v.open, v.close) - v.low;
-  const zonas = datos.niveles.filter((n) => n.tipo === "zona" && n.estado === "activa" && isFinite(n.min));
-  const zona = zonas.find((z) => v.low <= techo(z) && v.high >= z.min) || null;
-  const rota = !!zona && v.close < zona.min;
-  const toqueBanda = v.low <= ind.bbInf;
-  const posCierre = rango > 0 ? (v.close - v.low) / rango : NaN;
-  const mechaOk = mecha / v.close >= 0.01 && mecha > cuerpo && posCierre >= 0.5;
-  const rechazo = toqueBanda || mechaOk;
+  const posCierre = rango > 0 ? (v.close - v.low) / rango : 0;
+  const cierreAlto = posCierre >= 0.5;
+  const zonas = datos.niveles.filter((n) => n.tipo === "zona" && n.estado !== "rota" && isFinite(n.min));
+  const candidatas = zonas
+    .filter((z) => v.low <= techo(z) + margen && v.close >= z.min - margen)
+    .sort((a, b) => techo(a) - techo(b));
+  let zona = candidatas.find((z) => z.estado !== "comprada") || candidatas[0] || null;
+  const rota = !!zona && zona.estado !== "comprada" && v.close < zona.min;
+  if (rota) zona = null;
+  const zonaRota = rota ? candidatas.find((z) => z.estado !== "comprada") : null;
+  const comprada = !!zona && zona.estado === "comprada";
+  const toqueBanda = v.low < ind.bbInf && v.close > ind.bbInf;
+  const mechaOk = (mecha / v.close) * 100 >= 1 && mecha >= cuerpo;
+  const rechazo = (toqueBanda || mechaOk) && cierreAlto && (!zona || v.close >= zona.min);
   const confirmacion = ind.rsiD < 45 || ind.volRel >= 1.3;
+  const cerca200 = isFinite(ind.ma200w) && v.low <= ind.ma200w * 1.03;
   const capitulacion = ind.rsiD < 35 && ind.volRel >= 1.5;
-  const cerca200 = isFinite(ind.ma200w) && v.low <= ind.ma200w * 1.05;
-  const senal = !!zona && !rota && rechazo && confirmacion;
-  const pausa = datos.niveles.find((n) => n.tipo === "pausa" && n.estado !== "rota" && isFinite(n.min) && v.close < n.min) || null;
+  const bajista = (isFinite(ind.ma200d) && v.close < ind.ma200d) || (isFinite(ind.ma20w) && ind.cierreSemana < ind.ma20w);
+  let mult = 1;
+  if (cerca200) {
+    mult = 2;
+  } else {
+    if (capitulacion) mult = 2;
+    if (bajista) mult *= 0.5;
+  }
+  const senal = !!zona && rechazo && confirmacion;
+  const cautela = senal && mult < 1;
+  const compra = senal && !comprada && !cautela;
+  const pausaNivel = datos.niveles.find((n) => n.tipo === "pausa" && n.estado !== "rota" && isFinite(n.min));
+  const pausa = pausaNivel && ind.ayer && v.close < pausaNivel.min && ind.ayer.close >= pausaNivel.min ? pausaNivel : null;
   return {
     zona: zona,
     rota: rota,
+    zonaRota: zonaRota,
+    comprada: comprada,
+    margen: margen,
     toqueBanda: toqueBanda,
     mecha: mecha,
     cuerpo: cuerpo,
@@ -1142,8 +1182,13 @@ function evaluarSenal(ind) {
     confirmacion: confirmacion,
     capitulacion: capitulacion,
     cerca200: cerca200,
+    bajista: bajista,
+    mult: mult,
     senal: senal,
-    fuerte: senal && (capitulacion || cerca200),
+    cautela: cautela,
+    compra: compra,
+    fuerte: compra && mult >= 2,
+    importeWidget: compra ? (mult >= 2 ? 40 : 20) : 0,
     pausa: pausa
   };
 }
@@ -1175,14 +1220,16 @@ function liquidezMarcada() {
 
 function importeRecomendado(ind, s) {
   if (!s.senal) return { importe: 0, texto: "Sin señal provisional: no corresponde compra." };
+  if (s.comprada) return { importe: 0, texto: s.zona.nombre + " ya está comprada: una compra por zona." };
+  if (s.cautela) return { importe: 0, texto: "Señal con cautela (tendencia bajista sin capitulación ni 200 semanas): no se compra." };
   let base = 20;
   let calidad = "normal";
-  if (s.capitulacion && s.cerca200) {
+  if (s.cerca200 && s.capitulacion) {
     base = 50;
     calidad = "capitulación y 200 semanas";
-  } else if (s.capitulacion || s.cerca200) {
+  } else if (s.mult >= 2) {
     base = 40;
-    calidad = s.capitulacion ? "capitulación" : "200 semanas";
+    calidad = s.cerca200 ? "200 semanas" : "capitulación";
   }
   const entrada = ind.hoy.close;
   const invalidacion = s.zona.min;
@@ -1243,32 +1290,36 @@ function pintarAnalisis() {
     const v = ind.hoy;
     let html = "";
     if (s.zona) {
-      html += filaHtml("Zona", s.rota
-        ? "Toca " + esc(s.zona.nombre) + ", pero cerraría por debajo: se rompería " + marca(false)
-        : "Toca " + esc(s.zona.nombre) + " (" + rangoTexto(s.zona) + " €) " + marca(true));
+      html += filaHtml("Zona", "Toca " + esc(s.zona.nombre) + " (" + rangoTexto(s.zona) + " €, margen ±" + miles(s.margen) + " €)" + (s.comprada ? " · ya comprada" : "") + " " + marca(!s.comprada));
+    } else if (s.rota) {
+      html += filaHtml("Zona", "Cerraría por debajo de " + esc(s.zonaRota.nombre) + ": se rompería " + marca(false));
     } else {
       html += filaHtml("Zona", "No toca ninguna zona activa " + marca(false));
     }
-    const detalleRechazo = (s.toqueBanda ? "toca la banda inferior (" + miles(ind.bbInf) + " €)" : "no toca la banda") +
+    const detalleRechazo = (s.toqueBanda ? "bajó de la banda (" + miles(ind.bbInf) + " €) y cierra dentro" : "sin rechazo en la banda (" + miles(ind.bbInf) + " €)") +
       " · mecha " + fmtPct((s.mecha / v.close) * 100).replace("+", "") + (s.mecha > s.cuerpo ? " > cuerpo" : " ≤ cuerpo") +
       " · cierre al " + (isFinite(s.posCierre) ? Math.round(s.posCierre * 100) : "—") + " % del rango";
     html += filaHtml("Rechazo", detalleRechazo + " " + marca(s.rechazo));
     html += filaHtml("Confirmación", "RSI " + ind.rsiD.toLocaleString("es-ES", { maximumFractionDigits: 1 }) +
       " · volumen " + ind.volRel.toLocaleString("es-ES", { maximumFractionDigits: 2 }) + "× " + marca(s.confirmacion));
-    html += filaHtml("Fuerza", "capitulación " + marca(s.capitulacion) + " · 200 semanas " + marca(s.cerca200));
+    html += filaHtml("Fuerza", "200 semanas (≤ 3 %) " + marca(s.cerca200) + " · capitulación " + marca(s.capitulacion) + " · tendencia " + (s.bajista ? "bajista" : "normal"));
     let resultado = "Sin señal";
     let clase = "baja";
-    if (s.senal) {
+    if (s.senal && s.comprada) {
+      resultado = s.zona.nombre + " ya comprada";
+    } else if (s.cautela) {
+      resultado = "Con cautela: no se compra";
+    } else if (s.compra) {
       resultado = s.fuerte ? "Señal FUERTE (provisional)" : "Señal normal (provisional)";
       clase = "sube";
     }
     html += filaHtml("<b>Resultado</b>", "<b>" + resultado + "</b>", clase);
     if (s.pausa) html += filaHtml("Pausa", "Cerraría por debajo de " + miles(s.pausa.min) + " €: el widget se pausaría", "baja");
-    html += "<div class=\"vacio\">El volumen de hoy es parcial hasta el cierre: la capitulación (1,5×) puede cumplirse más tarde.</div>";
+    html += "<div class=\"vacio\">Misma lógica que el widget (modelo v2). El volumen es parcial hasta el cierre. La app no conoce tu espera entre compras: si el widget la tiene activa, manda el widget.</div>";
     elSenal.innerHTML = html;
 
     const imp = importeRecomendado(ind, s);
-    const widget = s.senal ? (s.fuerte ? 40 : 20) : 0;
+    const widget = s.importeWidget;
     $("a-importe").innerHTML =
       filaHtml("Widget (regla actual)", widget ? widget + " €" : "—") +
       filaHtml("Regla nueva (hasta 50 €)", imp.importe ? "<b>" + imp.importe + " €</b>" : "—", imp.importe ? "sube" : "") +
@@ -1421,10 +1472,10 @@ function textoParaClaude() {
     l.push("Señal provisional: zona " + (s.zona ? s.zona.nombre + (s.rota ? " (cerraría rota)" : "") : "ninguna") +
       " · rechazo " + (s.rechazo ? "sí" : "no") + " (banda " + (s.toqueBanda ? "sí" : "no") + ", mecha " + f1((s.mecha / v.close) * 100) + " %, cierre al " + (isFinite(s.posCierre) ? Math.round(s.posCierre * 100) : "—") + " % del rango)" +
       " · confirmación " + (s.confirmacion ? "sí" : "no") +
-      " · capitulación " + (s.capitulacion ? "sí" : "no") + " · 200 sem " + (s.cerca200 ? "sí" : "no") +
-      " → " + (s.senal ? (s.fuerte ? "FUERTE" : "normal") : "sin señal") + (s.pausa ? " · cerraría bajo la pausa" : ""));
+      " · 200 sem (≤3 %) " + (s.cerca200 ? "sí" : "no") + " · capitulación " + (s.capitulacion ? "sí" : "no") + " · tendencia " + (s.bajista ? "bajista" : "normal") +
+      " → " + (s.compra ? (s.fuerte ? "FUERTE" : "normal") : s.cautela ? "con cautela (no se compra)" : s.comprada ? "zona ya comprada" : "sin señal") + (s.pausa ? " · cerraría bajo la pausa" : ""));
     const imp = importeRecomendado(ind, s);
-    l.push("Importe: widget " + (s.senal ? (s.fuerte ? 40 : 20) + " €" : "—") + " · regla nueva " + (imp.importe ? imp.importe + " €" : "—") + " (" + imp.texto + ")");
+    l.push("Importe: widget " + (s.importeWidget ? s.importeWidget + " €" : "—") + " · regla nueva " + (imp.importe ? imp.importe + " €" : "—") + " (" + imp.texto + ")");
   } else {
     l.push("Indicadores: sin datos de velas.");
   }
