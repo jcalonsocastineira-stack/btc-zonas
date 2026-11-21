@@ -1362,10 +1362,15 @@ function importeRecomendado(ind, s) {
     "riesgo hasta " + s.zona.nombre + " " + miles(invalidacion) + " €: " + fmtPct(-distancia * 100) + (isFinite(tope) ? " → tope " + Math.floor(tope) + " €" : ""),
     recortes.length ? "recortes: " + recortes.join(", ") : "sin recortes"
   ];
+  const detalles = [
+    ["Calidad", calidad + " (máx. " + base + " €)"],
+    ["Riesgo hasta " + s.zona.nombre + " (" + miles(invalidacion) + " €)", (distancia * 100).toLocaleString("es-ES", { maximumFractionDigits: 1 }) + " %" + (isFinite(tope) ? " → máx. " + Math.floor(tope) + " €" : "")],
+    ["Recortes", recortes.length ? recortes.join(", ") : "ninguno"]
+  ];
   if (redondeado < 20) {
-    return { importe: 0, texto: "Sale " + Math.floor(importe) + " €: menos de 20 €, no compensa por la comisión. " + partes.join(" · ") };
+    return { importe: 0, detalles: detalles, texto: "Sale " + Math.floor(importe) + " €: menos de 20 €, no compensa por la comisión. " + partes.join(" · ") };
   }
-  return { importe: redondeado, texto: partes.join(" · ") };
+  return { importe: redondeado, detalles: detalles, texto: partes.join(" · ") };
 }
 
 function marca(ok) {
@@ -1432,7 +1437,9 @@ function pintarAnalisis() {
     $("a-importe").innerHTML =
       filaHtml("Widget (regla actual)", widget ? widget + " €" : "—") +
       filaHtml("Regla nueva (hasta 50 €)", imp.importe ? "<b>" + imp.importe + " €</b>" : "—", imp.importe ? "sube" : "") +
-      "<div class=\"vacio\">" + esc(imp.texto) + "</div>";
+      (imp.detalles
+        ? imp.detalles.map((d) => filaHtml("<span class=\"sec\">" + esc(d[0]) + "</span>", "<span class=\"sec\">" + esc(d[1]) + "</span>")).join("")
+        : "<div class=\"vacio\">" + esc(imp.texto) + "</div>");
 
     const f1 = (x) => x.toLocaleString("es-ES", { maximumFractionDigits: 1 });
     $("a-indicadores").innerHTML =
@@ -1738,10 +1745,10 @@ function pintarEscenarios() {
   if (actual && (actual.tipo === "fuerte" || actual.tipo === "normal")) {
     const hi = HISTORIAL[actual.tipo];
     html += "<div class=\"vacio\">Después de " + hi.casos + " señales " + (actual.tipo === "fuerte" ? "fuertes" : "normales") + " (2017–2026):</div>" +
-      filaHtml("En 7 días baja un 5 % en algún momento", hi.baja5 + " %") +
-      filaHtml("En 7 días sube un 5 % en algún momento", hi.sube5 + " %") +
-      filaHtml("Más arriba a los 7 / 30 días", hi.arriba7 + " % / " + hi.arriba30 + " %") +
-      filaHtml("Más arriba a los 90 días <span class=\"sec\">mediana " + fmtPct(hi.mediana90) + "</span>", hi.arriba90 + " %", hi.arriba90 >= 60 ? "sube" : "baja");
+      filaHtml("En 7 días baja un 5 % en algún momento", hi.baja5 + "\u00a0%") +
+      filaHtml("En 7 días sube un 5 % en algún momento", hi.sube5 + "\u00a0%") +
+      filaHtml("Más arriba a los 7 / 30 días", hi.arriba7 + "\u00a0% / " + hi.arriba30 + "\u00a0%") +
+      filaHtml("Más arriba a los 90 días <span class=\"sec\">mediana " + fmtPct(hi.mediana90) + "</span>", hi.arriba90 + "\u00a0%", hi.arriba90 >= 60 ? "sube" : "baja");
   }
   el.innerHTML = html;
 }
@@ -1762,17 +1769,29 @@ function pintarSimulacion() {
   const s = evaluarSenal(ind);
   const imp = importeRecomendado(ind, s);
   const r = resultadoEn(p);
-  let html = filaHtml("<b>Resultado</b>", "<b>" + esc(r.texto) + "</b>", r.tipo === "fuerte" || r.tipo === "normal" ? "sube" : r.tipo === "rota" ? "baja" : "");
+  const clase = r.tipo === "fuerte" || r.tipo === "normal" ? "sube" : r.tipo === "rota" ? "baja" : "";
+  let resultado = "Sin señal";
+  if (s.rota) resultado = (s.zonaRota ? s.zonaRota.nombre : "Zona") + " rota";
+  else if (s.compra) resultado = s.fuerte ? "Señal FUERTE" : "Señal normal";
+  else if (s.cautela) resultado = "Con cautela: no se compra";
+  else if (s.senal && s.comprada) resultado = "Zona ya comprada";
+  let html = filaHtml("<b>Resultado</b>", "<b>" + esc(resultado) + "</b>", clase);
+  if (s.compra) {
+    html += filaHtml("Importe del widget", s.importeWidget + " €");
+    html += filaHtml("Importe regla nueva", imp.importe ? imp.importe + " €" : "no compra", imp.importe ? "sube" : "");
+    for (const d of imp.detalles || []) html += filaHtml("<span class=\"sec\">" + esc(d[0]) + "</span>", "<span class=\"sec\">" + esc(d[1]) + "</span>");
+  }
   html += filaHtml("Zona · rechazo · confirmación", (s.zona ? esc(s.zona.nombre) : "—") + " · " + (s.rechazo ? "sí" : "no") + " · " + (s.confirmacion ? "sí" : "no"));
   html += filaHtml("RSI · cierre en el rango", ind.rsiD.toLocaleString("es-ES", { maximumFractionDigits: 1 }) + " · " + Math.round(s.posCierre * 100) + " %");
-  html += "<div class=\"vacio\">" + esc(imp.texto) + "</div>";
   if (s.compra) {
     const umbral = p * (1 - REARME);
     const zona = s.zona;
     const suelo = zona.min * (1 - MARGEN_REARME);
-    html += filaHtml("Si compras a " + miles(p) + " €, " + esc(zona.nombre) + " se rearma",
-      umbral >= suelo ? "si una vela cierra entre " + miles(suelo) + " y " + miles(umbral) + " €" : "nunca: un 5 % por debajo ya queda fuera de " + esc(zona.nombre));
-    html += "<div class=\"vacio\">Rearmar no es comprar: la zona vuelve a estar disponible y solo habría otra compra si aparece una señal nueva.</div>";
+    html += "<div class=\"vacio\"><b>Si compras a " + miles(p) + " €</b></div>";
+    html += umbral >= suelo
+      ? filaHtml(esc(zona.nombre) + " se rearma si cierra entre", miles(suelo) + "\u00a0–\u00a0" + miles(umbral) + "\u00a0€")
+      : filaHtml(esc(zona.nombre) + " se rearma", "no: un 5 % por debajo ya queda fuera de la zona");
+    html += "<div class=\"vacio\">Rearmar no es comprar: la zona vuelve a estar disponible y solo habría otra compra con una señal nueva.</div>";
   }
   el.innerHTML = html;
 }
