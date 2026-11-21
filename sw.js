@@ -3,7 +3,7 @@
 // Librería del gráfico: copia guardada primero.
 // Las APIs de precios no pasan por aquí: siempre van en directo.
 
-const VERSION = "btc-zonas-v11";
+const VERSION = "btc-zonas-v12";
 
 const ARCHIVOS = [
   "./",

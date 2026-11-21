@@ -1769,7 +1769,10 @@ function pintarSimulacion() {
   if (s.compra) {
     const umbral = p * (1 - REARME);
     const zona = s.zona;
-    html += filaHtml("Si compras a " + miles(p) + " €, se rearma", "cierre bajo " + miles(umbral) + " €" + (umbral >= zona.min * (1 - MARGEN_REARME) ? " (dentro de " + esc(zona.nombre) + ")" : " (por debajo de " + esc(zona.nombre) + ": no se rearmaría)"));
+    const suelo = zona.min * (1 - MARGEN_REARME);
+    html += filaHtml("Si compras a " + miles(p) + " €, " + esc(zona.nombre) + " se rearma",
+      umbral >= suelo ? "si una vela cierra entre " + miles(suelo) + " y " + miles(umbral) + " €" : "nunca: un 5 % por debajo ya queda fuera de " + esc(zona.nombre));
+    html += "<div class=\"vacio\">Rearmar no es comprar: la zona vuelve a estar disponible y solo habría otra compra si aparece una señal nueva.</div>";
   }
   el.innerHTML = html;
 }
