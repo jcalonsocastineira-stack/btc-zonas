@@ -1,8 +1,10 @@
 {
  "ultimoCierre": 1795132800,
  "avisos": {
-  "prov-2026-11-21": 1795259920
+  "prov-2026-11-21": 1795259920,
+  "precierre-2026-11-21": 1795300672
  },
  "rotas": {},
- "pausa": null
+ "pausa": null,
+ "rearmadas": {}
 }
