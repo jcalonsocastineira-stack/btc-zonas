@@ -699,6 +699,9 @@ function construirSeries() {
   marcas.sort((a, b) => a.time - b.time);
   serieVelas.setMarkers(marcas);
 
+  lineasLiq = [];
+  dibujarLiquidaciones();
+
   if (ajustarVista) {
     const barras = intervalo === 1440 ? 90 : 60;
     chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, velas.length - barras), to: velas.length + 3 });
@@ -763,6 +766,214 @@ function abrirGrafico() {
   const el = $("grafico");
   chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
   if (velas.length === 0) cargarVelas();
+}
+
+/* ---------- liquidaciones estimadas (modelo propio con datos públicos de Binance) ----------
+   Cada hora en la que sube el interés abierto se suponen posiciones nuevas al precio medio de esa hora,
+   repartidas entre largos y cortos según el índice de cuentas de Binance y con apalancamientos típicos.
+   Cuando el precio cruza un nivel de liquidación, ese nivel se da por ejecutado y desaparece.
+   Cuando baja el interés abierto, todas las posiciones vivas se reducen en la misma proporción. */
+
+const APALANCAMIENTOS = [[10, 0.3], [25, 0.3], [50, 0.25], [100, 0.15]];
+const MANTENIMIENTO = 0.004;
+const CLAVE_LIQ = "btczonas.liq";
+
+let liq = { niveles: [], precioUsd: NaN, actualizado: null, error: "" };
+let lineasLiq = [];
+let mostrarLiq = true;
+let calculandoLiq = false;
+
+try {
+  mostrarLiq = localStorage.getItem(CLAVE_LIQ) !== "no";
+} catch (e) {
+  mostrarLiq = true;
+}
+
+async function seriePaginada(base, limite, total) {
+  const porTiempo = new Map();
+  let fin = Date.now();
+  for (let vuelta = 0; vuelta < 4 && porTiempo.size < total; vuelta++) {
+    const j = await getJSON(base + "&limit=" + limite + "&endTime=" + fin, 12000);
+    if (!Array.isArray(j) || j.length === 0) break;
+    let primero = Infinity;
+    for (const x of j) {
+      const t = Number(x.timestamp);
+      porTiempo.set(t, x);
+      if (t < primero) primero = t;
+    }
+    if (j.length < limite) break;
+    fin = primero - 1;
+  }
+  return porTiempo;
+}
+
+function modeloLiquidaciones(velasF, mapaOI, mapaLS) {
+  let vivos = [];
+  let partLargos = 0.5;
+  for (const k of velasF) {
+    const t = Number(k[0]);
+    const alto = Number(k[2]);
+    const bajo = Number(k[3]);
+    const cierre = Number(k[4]);
+    vivos = vivos.filter((p) => (p.lado === "largo" ? p.precio < bajo : p.precio > alto));
+    if (mapaLS.has(t)) {
+      const v = Number(mapaLS.get(t).longAccount);
+      if (v > 0 && v < 1) partLargos = v;
+    }
+    const a = mapaOI.get(t);
+    const b = mapaOI.get(t + 3600000);
+    if (!a || !b) continue;
+    const oiA = Number(a.sumOpenInterest);
+    const oiB = Number(b.sumOpenInterest);
+    if (!(oiA > 0) || !(oiB > 0)) continue;
+    const delta = oiB - oiA;
+    if (delta > 0) {
+      const entrada = (alto + bajo + cierre) / 3;
+      for (const par of APALANCAMIENTOS) {
+        const lev = par[0];
+        const peso = par[1];
+        vivos.push({ lado: "largo", precio: entrada * (1 - 1 / lev + MANTENIMIENTO), btc: delta * partLargos * peso, entrada: entrada });
+        vivos.push({ lado: "corto", precio: entrada * (1 + 1 / lev - MANTENIMIENTO), btc: delta * (1 - partLargos) * peso, entrada: entrada });
+      }
+    } else if (delta < 0) {
+      const f = oiB / oiA;
+      for (const p of vivos) p.btc *= f;
+    }
+  }
+  const P = Number(velasF[velasF.length - 1][4]);
+  const paso = P * 0.0025;
+  const cubos = new Map();
+  for (const p of vivos) {
+    if (!(p.btc > 0) || Math.abs(p.precio / P - 1) > 0.2) continue;
+    const clave = Math.round(p.precio / paso);
+    const c = cubos.get(clave) || { precio: clave * paso, largo: 0, corto: 0 };
+    c[p.lado] += p.btc * p.entrada;
+    cubos.set(clave, c);
+  }
+  return { niveles: Array.from(cubos.values()).sort((x, y) => x.precio - y.precio), precioUsd: P };
+}
+
+async function calcularLiquidaciones() {
+  if (calculandoLiq) return;
+  calculandoLiq = true;
+  try {
+    const res = await Promise.all([
+      getJSON("https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=1h&limit=720", 12000),
+      seriePaginada("https://fapi.binance.com/futures/data/openInterestHist?symbol=BTCUSDT&period=1h", 500, 720),
+      seriePaginada("https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=BTCUSDT&period=1h", 500, 720)
+    ]);
+    if (!Array.isArray(res[0]) || res[0].length < 24 || res[1].size < 24) throw new Error("pocos datos");
+    const m = modeloLiquidaciones(res[0], res[1], res[2]);
+    liq = { niveles: m.niveles, precioUsd: m.precioUsd, actualizado: new Date(), error: "" };
+  } catch (e) {
+    liq.error = "No se pudieron calcular. Se reintentará en unos minutos.";
+  } finally {
+    calculandoLiq = false;
+  }
+  pintarLiquidaciones();
+  dibujarLiquidaciones();
+}
+
+function factorEur() {
+  if (isFinite(mercado.eur) && isFinite(mercado.usd) && mercado.usd > 0) return mercado.eur / mercado.usd;
+  return NaN;
+}
+
+function millones(v) {
+  if (!isFinite(v)) return "—";
+  const m = v / 1e6;
+  return m.toLocaleString("es-ES", { maximumFractionDigits: m < 10 ? 1 : 0 }) + "\u00a0M$";
+}
+
+function sumaLiq(lado, desde, hasta) {
+  let s = 0;
+  for (const n of liq.niveles) {
+    if (n.precio >= desde && n.precio <= hasta) s += n[lado];
+  }
+  return s;
+}
+
+function mayorGrupo(lado) {
+  const P = liq.precioUsd;
+  let mejor = null;
+  for (const n of liq.niveles) {
+    const valido = lado === "largo" ? n.precio < P : n.precio > P;
+    if (valido && n[lado] > 0 && (!mejor || n[lado] > mejor[lado])) mejor = n;
+  }
+  return mejor;
+}
+
+function pintarLiquidaciones() {
+  const el = $("liq-resumen");
+  if (!el) return;
+  $("liq-act").textContent = liq.actualizado
+    ? liq.actualizado.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })
+    : "—";
+  if (liq.niveles.length === 0) {
+    el.innerHTML = "<div class=\"vacio\">" + esc(liq.error || "Calculando…") + "</div>";
+    return;
+  }
+  const P = liq.precioUsd;
+  const f = factorEur();
+  const abajo = [1, 3, 5].map((x) => millones(sumaLiq("largo", P * (1 - x / 100), P)));
+  const arriba = [1, 3, 5].map((x) => millones(sumaLiq("corto", P, P * (1 + x / 100))));
+  const gAbajo = mayorGrupo("largo");
+  const gArriba = mayorGrupo("corto");
+  const grupo = (g, lado) => {
+    if (!g) return "—";
+    const precio = isFinite(f) ? fmtEur(g.precio * f) : miles(g.precio) + " $";
+    return precio + " (" + fmtPct((g.precio / P - 1) * 100) + ") · " + millones(g[lado]);
+  };
+  el.innerHTML =
+    "<div class=\"item\"><span>Si baja <span class=\"sec\">−1 / −3 / −5 %</span></span><span>" + abajo.join(" · ") + "</span></div>" +
+    "<div class=\"item\"><span>Si sube <span class=\"sec\">+1 / +3 / +5 %</span></span><span>" + arriba.join(" · ") + "</span></div>" +
+    "<div class=\"item\"><span>Mayor grupo debajo <span class=\"sec\">largos</span></span><span>" + grupo(gAbajo, "largo") + "</span></div>" +
+    "<div class=\"item\"><span>Mayor grupo encima <span class=\"sec\">cortos</span></span><span>" + grupo(gArriba, "corto") + "</span></div>" +
+    (liq.error ? "<div class=\"vacio\">" + esc(liq.error) + "</div>" : "");
+}
+
+function dibujarLiquidaciones() {
+  if (!serieVelas) return;
+  for (const l of lineasLiq) {
+    try {
+      serieVelas.removePriceLine(l);
+    } catch (e) {
+      /* la línea ya no existe */
+    }
+  }
+  lineasLiq = [];
+  const boton = $("b-liq");
+  if (boton) boton.setAttribute("aria-pressed", mostrarLiq ? "true" : "false");
+  if (!mostrarLiq || liq.niveles.length === 0) return;
+  const f = factorEur();
+  if (!isFinite(f)) return;
+  const P = liq.precioUsd;
+  const abajo = liq.niveles.filter((n) => n.precio < P && n.largo > 0).sort((x, y) => y.largo - x.largo).slice(0, 12);
+  const arriba = liq.niveles.filter((n) => n.precio > P && n.corto > 0).sort((x, y) => y.corto - x.corto).slice(0, 12);
+  const maximo = Math.max(1, ...abajo.map((n) => n.largo), ...arriba.map((n) => n.corto));
+  const dibujar = (n, valor) => {
+    const rel = valor / maximo;
+    lineasLiq.push(serieVelas.createPriceLine({
+      price: n.precio * f,
+      color: "rgba(232,197,71," + (0.18 + 0.67 * rel).toFixed(2) + ")",
+      lineWidth: rel > 0.66 ? 4 : (rel > 0.33 ? 3 : 2),
+      lineStyle: 0,
+      axisLabelVisible: false,
+      title: ""
+    }));
+  };
+  abajo.forEach((n) => dibujar(n, n.largo));
+  arriba.forEach((n) => dibujar(n, n.corto));
+}
+
+function alternarLiquidaciones() {
+  mostrarLiq = !mostrarLiq;
+  try {
+    localStorage.setItem(CLAVE_LIQ, mostrarLiq ? "si" : "no");
+  } catch (e) {
+    /* sin almacenamiento */
+  }
+  dibujarLiquidaciones();
 }
 
 /* ---------- calculadora ---------- */
@@ -1188,17 +1399,21 @@ function refrescarTodo() {
 
 let temporizadorPrecios = null;
 let temporizadorMiedo = null;
+let temporizadorLiq = null;
 
 function arrancarTemporizadores() {
   clearInterval(temporizadorPrecios);
   clearInterval(temporizadorMiedo);
   temporizadorPrecios = setInterval(actualizarPrecios, 60000);
   temporizadorMiedo = setInterval(actualizarMiedo, 30 * 60000);
+  clearInterval(temporizadorLiq);
+  temporizadorLiq = setInterval(calcularLiquidaciones, 10 * 60000);
 }
 
 function pararTemporizadores() {
   clearInterval(temporizadorPrecios);
   clearInterval(temporizadorMiedo);
+  clearInterval(temporizadorLiq);
 }
 
 function iniciar() {
@@ -1218,6 +1433,7 @@ function iniciar() {
   }));
 
   $("b-centrar").addEventListener("click", centrarGrafico);
+  $("b-liq").addEventListener("click", alternarLiquidaciones);
 
   ["c-importe", "c-comision", "c-entrada", "c-inval", "c-objetivo"].forEach((id) => $(id).addEventListener("input", calcular));
   document.querySelectorAll("[data-importe]").forEach((b) => b.addEventListener("click", () => {
@@ -1258,6 +1474,7 @@ function iniciar() {
     if (document.visibilityState === "visible") {
       actualizarPrecios();
       actualizarMiedo();
+      calcularLiquidaciones();
       conectarDirecto();
       arrancarTemporizadores();
       if (chart && $("v-grafico").classList.contains("activa")) cargarVelas();
@@ -1271,6 +1488,7 @@ function iniciar() {
   pintarCompras();
   pintarNotas();
   pintarPanel();
+  pintarLiquidaciones();
   pintarCuentaAtras();
   setInterval(pintarCuentaAtras, 15000);
 
@@ -1282,7 +1500,7 @@ function iniciar() {
   }
   irA(vistaInicial);
 
-  actualizarPrecios();
+  actualizarPrecios().then(calcularLiquidaciones);
   actualizarMiedo();
   conectarDirecto();
   arrancarTemporizadores();

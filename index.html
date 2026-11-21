@@ -62,6 +62,15 @@
       </div>
 
       <div class="tarjeta">
+        <div class="fila">
+          <span class="etq">Liquidaciones estimadas · Binance 30 días</span>
+          <span class="etq" id="liq-act">—</span>
+        </div>
+        <div id="liq-resumen" class="lista-simple"></div>
+        <p class="nota">Modelo propio a partir del interés abierto de Binance. Orientativo: no coincide exactamente con CoinPerps.</p>
+      </div>
+
+      <div class="tarjeta">
         <div class="etq">Tu cartera BTC</div>
         <div id="cartera" class="lista-simple"></div>
       </div>
@@ -74,7 +83,10 @@
       </div>
       <div class="grafico-caja">
         <div id="grafico" class="grafico"></div>
-        <button type="button" id="b-centrar" class="centrar" aria-label="Centrar el gráfico en las últimas velas">Centrar</button>
+        <div class="botones-grafico">
+          <button type="button" id="b-centrar" aria-label="Centrar el gráfico en las últimas velas">Centrar</button>
+          <button type="button" id="b-liq" aria-pressed="true">Liquidaciones</button>
+        </div>
       </div>
       <div class="leyenda">
         <span><i class="cuadro" style="background:#1D9E75"></i>Zona activa</span>
@@ -83,6 +95,7 @@
         <span><i class="cuadro" style="background:#E24B4A"></i>Resistencia</span>
         <span><i class="cuadro" style="background:#EF9F27"></i>Pausa</span>
         <span><i class="cuadro linea"></i>Bollinger 20</span>
+        <span><i class="cuadro linea liq"></i>Liquidaciones estimadas</span>
       </div>
       <p class="nota" id="graf-estado"></p>
     </section>
