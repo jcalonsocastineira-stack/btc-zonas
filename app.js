@@ -1210,6 +1210,38 @@ function indicadores(precio) {
       atr = (atr * 13 + tr) / 14;
     }
   }
+  let sPos = 0;
+  let sNeg = 0;
+  let sTr = 0;
+  let adx = NaN;
+  let sumaDx = 0;
+  for (let i = 1; i < d.length; i++) {
+    const subida = d[i].high - d[i - 1].high;
+    const bajada = d[i - 1].low - d[i].low;
+    const pos = subida > bajada && subida > 0 ? subida : 0;
+    const neg = bajada > subida && bajada > 0 ? bajada : 0;
+    const tr = Math.max(d[i].high - d[i].low, Math.abs(d[i].high - d[i - 1].close), Math.abs(d[i].low - d[i - 1].close));
+    if (i <= 14) {
+      sPos += pos;
+      sNeg += neg;
+      sTr += tr;
+    } else {
+      sPos = sPos - sPos / 14 + pos;
+      sNeg = sNeg - sNeg / 14 + neg;
+      sTr = sTr - sTr / 14 + tr;
+    }
+    if (i >= 14 && sTr > 0) {
+      const diP = (100 * sPos) / sTr;
+      const diN = (100 * sNeg) / sTr;
+      const dx = diP + diN > 0 ? (100 * Math.abs(diP - diN)) / (diP + diN) : 0;
+      if (i < 28) {
+        sumaDx += dx;
+        if (i === 27) adx = sumaDx / 14;
+      } else {
+        adx = (adx * 13 + dx) / 14;
+      }
+    }
+  }
   const ahora = Date.now() / 1000;
   const semanasCerradas = ana.w.filter((x) => x.time + 604800 <= ahora);
   const cwc = semanasCerradas.map((x) => x.close);
@@ -1227,6 +1259,7 @@ function indicadores(precio) {
     volRel: hoy.vol / volMedia,
     volMedia: volMedia,
     atr: atr,
+    adx: adx,
     ma200d: mediaUltimos(cd, 200),
     ma20w: mediaUltimos(cwc, 20),
     ma200w: mediaUltimos(cwc, 200),
@@ -1414,6 +1447,7 @@ function pintarAnalisis() {
     html += filaHtml("Confirmación", "RSI " + ind.rsiD.toLocaleString("es-ES", { maximumFractionDigits: 1 }) +
       " · volumen " + ind.volRel.toLocaleString("es-ES", { maximumFractionDigits: 2 }) + "× " + marca(s.confirmacion));
     html += filaHtml("Fuerza", "200 semanas (≤ 3 %) " + marca(s.cerca200) + " · capitulación " + marca(s.capitulacion) + " · tendencia " + (s.bajista ? "bajista" : "normal"));
+    html += filaHtml("ADX > 25 <span class=\"sec\">en observación, no decide</span>", ind.adx.toLocaleString("es-ES", { maximumFractionDigits: 1 }) + " " + marca(ind.adx > 25));
     let resultado = "Sin señal";
     let clase = "baja";
     if (s.senal && s.comprada) {
@@ -1446,6 +1480,7 @@ function pintarAnalisis() {
       filaHtml("RSI diario · semanal", f1(ind.rsiD) + " · " + f1(ind.rsiW)) +
       filaHtml("Bollinger diario", miles(ind.bbInf) + " / " + miles(ind.bbMed) + " / " + miles(ind.bbSup) + " €") +
       filaHtml("Volumen hoy <span class=\"sec\">media 20 d " + f1(ind.volMedia) + " BTC</span>", f1(v.vol) + " BTC (" + ind.volRel.toLocaleString("es-ES", { maximumFractionDigits: 2 }) + "×)") +
+      filaHtml("ADX 14 <span class=\"sec\">en observación</span>", f1(ind.adx) + (ind.adx > 40 ? " · tendencia muy fuerte" : ind.adx > 25 ? " · tendencia fuerte" : " · tendencia débil"), ind.adx > 25 ? "sube" : "") +
       filaHtml("Media 200 días", fmtEur(ind.ma200d) + distanciaA(ind.ma200d)) +
       filaHtml("Media 20 semanas", fmtEur(ind.ma20w) + distanciaA(ind.ma20w)) +
       filaHtml("Media 200 semanas", fmtEur(ind.ma200w) + distanciaA(ind.ma200w)) +
@@ -1585,6 +1620,7 @@ function textoParaClaude() {
     const v = ind.hoy;
     const s = evaluarSenal(ind);
     l.push("Vela diaria en curso (cierra en " + $("p-cierre").textContent + "): apertura " + miles(v.open) + " · máx " + miles(v.high) + " · mín " + miles(v.low) + " · actual " + miles(v.close) + " · volumen " + f1(v.vol) + " BTC (" + ind.volRel.toLocaleString("es-ES", { maximumFractionDigits: 2 }) + "× media 20 d)");
+    l.push("ADX 14 (en observación): " + f1(ind.adx));
     l.push("RSI diario " + f1(ind.rsiD) + " · RSI semanal " + f1(ind.rsiW) + " · Bollinger diario " + miles(ind.bbInf) + " / " + miles(ind.bbMed) + " / " + miles(ind.bbSup));
     l.push("Medias: 200 d " + miles(ind.ma200d) + distanciaA(ind.ma200d) + " · 20 sem " + miles(ind.ma20w) + distanciaA(ind.ma20w) + " · 200 sem " + miles(ind.ma200w) + distanciaA(ind.ma200w));
     l.push("Retroceso desde máx. 182 d (" + miles(ind.max182) + "): " + f1(ind.retroceso) + " %");
