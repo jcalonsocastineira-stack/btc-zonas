@@ -100,6 +100,60 @@
       <p class="nota" id="graf-estado"></p>
     </section>
 
+    <section id="v-analisis" class="vista">
+      <button type="button" class="primario ancho" id="b-copiar">Copiar para Claude</button>
+      <p class="nota" id="copiar-estado">Copia todos los datos en texto para pegarlos en el chat.</p>
+      <textarea id="copiar-texto" class="caja-copia oculto" rows="8" readonly></textarea>
+
+      <div class="tarjeta">
+        <div class="fila">
+          <span class="etq">Vela de hoy · provisional</span>
+          <span class="etq" id="a-cierre">—</span>
+        </div>
+        <div id="a-senal" class="lista-simple"></div>
+        <p class="nota">Comprobación con tus reglas sobre la vela en curso. Decide el widget con la vela cerrada (1:00).</p>
+      </div>
+
+      <div class="tarjeta">
+        <div class="etq">Importe recomendado · segunda opinión</div>
+        <div id="a-importe" class="lista-simple"></div>
+        <label class="interruptor"><input type="checkbox" id="a-liquidez"> Hay liquidez grande sin barrer justo debajo</label>
+      </div>
+
+      <div class="tarjeta">
+        <div class="etq">Indicadores · Kraken BTCEUR</div>
+        <div id="a-indicadores" class="lista-simple"></div>
+      </div>
+
+      <div class="tarjeta">
+        <div class="fila">
+          <span class="etq">Derivados · Binance BTCUSDT</span>
+          <span class="etq" id="a-der-act">—</span>
+        </div>
+        <div id="a-derivados" class="lista-simple"></div>
+      </div>
+
+      <div class="tarjeta">
+        <div class="etq">Calendario macro</div>
+        <div id="l-eventos"></div>
+        <form id="f-evento" class="formulario" novalidate>
+          <div class="dos">
+            <label>Fecha
+              <input id="e-fecha" type="date">
+            </label>
+            <label>Hora (España)
+              <input id="e-hora" type="time" value="14:30">
+            </label>
+          </div>
+          <label>Dato
+            <input id="e-nombre" type="text" placeholder="IPC de EE. UU." autocomplete="off">
+          </label>
+          <p class="error" id="e-error"></p>
+          <button type="submit" class="ancho">Añadir dato macro</button>
+        </form>
+      </div>
+    </section>
+
     <section id="v-calc" class="vista">
       <div class="tarjeta formulario">
         <label>Importe (€)
@@ -243,6 +297,10 @@
     <button type="button" data-vista="grafico" aria-label="Gráfico">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v16M7 8h-2v6h2M17 4v16M17 7h-2v9h2M12 6v12M12 10h-2v4h2"/></svg>
       <span>Gráfico</span>
+    </button>
+    <button type="button" data-vista="analisis" aria-label="Análisis">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg>
+      <span>Análisis</span>
     </button>
     <button type="button" data-vista="calc" aria-label="Calculadora">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18H6zM9 7h6M9 12h1M14 12h1M9 16h1M14 16h1"/></svg>

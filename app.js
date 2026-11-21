@@ -26,10 +26,13 @@ const DATOS_SISTEMA = {
     { id: "c3", fecha: "2026-10-31", precio: 69721.29, btc: 0.000286, total: 20.94, comision: 1, nota: "Z3" },
     { id: "c4", fecha: "2026-11-16", precio: 59213.25, btc: 0.000675, total: 40.97, comision: 1, nota: "Z5 señal fuerte" }
   ],
-  notas: []
+  notas: [],
+  eventos: [
+    { id: "pce-nov", fecha: "2026-11-25", hora: "14:30", nombre: "PCE de EE. UU. (hora habitual, compruébala)" }
+  ]
 };
 
-const TITULOS = { panel: "Panel", grafico: "Gráfico", calc: "Calculadora", bitacora: "Bitácora" };
+const TITULOS = { panel: "Panel", grafico: "Gráfico", analisis: "Análisis", calc: "Calculadora", bitacora: "Bitácora" };
 const FG_ES = {
   "Extreme Fear": "Miedo extremo",
   "Fear": "Miedo",
@@ -139,7 +142,8 @@ function normalizar(d) {
   return {
     niveles: Array.isArray(d && d.niveles) ? d.niveles : [],
     compras: Array.isArray(d && d.compras) ? d.compras : [],
-    notas: Array.isArray(d && d.notas) ? d.notas : []
+    notas: Array.isArray(d && d.notas) ? d.notas : [],
+    eventos: Array.isArray(d && d.eventos) ? d.eventos : copiaSistema().eventos
   };
 }
 
@@ -333,6 +337,7 @@ function pedirRepintado() {
     repintadoPendiente = false;
     pintarPanel();
     revisarAvisos();
+    if ($("v-analisis").classList.contains("activa")) pintarAnalisis();
     if ($("v-calc").classList.contains("activa")) {
       if (!$("c-entrada").value && isFinite(mercado.eur)) $("c-entrada").value = String(Math.round(mercado.eur));
       calcular();
@@ -504,6 +509,14 @@ function revisarAvisos() {
       clase = "atento";
     }
   }
+  if (!texto) {
+    const ev = eventoProximo(24);
+    if (ev) {
+      const horas = Math.max(0, Math.round((ev.ts - Date.now()) / 3600000));
+      texto = "Dato macro en " + horas + " h: " + ev.nombre + " (" + cuandoEvento(ev) + "). Evita decidir en la hora del dato.";
+      clase = "atento";
+    }
+  }
   avisoFijo = { texto: texto, clase: clase };
   if (Date.now() >= avisoTemporalHasta) mostrarAviso(texto, clase);
 }
@@ -530,6 +543,10 @@ async function actualizarMiedo() {
     $("fg-barra").style.background = colorMiedo(v);
     $("fg-ayer").textContent = d[1] ? d[1].value : "—";
     $("fg-semana").textContent = d[7] ? d[7].value : "—";
+    miedo.valor = v;
+    miedo.texto = FG_ES[d[0].value_classification] || d[0].value_classification;
+    miedo.ayer = d[1] ? d[1].value : "";
+    miedo.semana = d[7] ? d[7].value : "";
   } catch (e) {
     $("fg-val").textContent = "Sin datos";
   }
@@ -979,6 +996,491 @@ function alternarLiquidaciones() {
   dibujarLiquidaciones();
 }
 
+/* ---------- análisis: indicadores, señal provisional, importe, derivados y calendario ---------- */
+
+const CLAVE_LIQUIDEZ = "btczonas.liquidez";
+const ana = { d: [], w: [], actualizado: null, error: "" };
+const der = { datos: null, actualizado: null, error: "" };
+const miedo = { valor: NaN, texto: "", ayer: "", semana: "" };
+
+async function velasKraken(intervaloMin) {
+  const j = await getJSON("https://api.kraken.com/0/public/OHLC?pair=XBTEUR&interval=" + intervaloMin, 12000);
+  if (j.error && j.error.length) throw new Error(j.error.join(", "));
+  const clave = Object.keys(j.result).find((x) => x !== "last");
+  return j.result[clave].map((r) => ({
+    time: Number(r[0]),
+    open: Number(r[1]),
+    high: Number(r[2]),
+    low: Number(r[3]),
+    close: Number(r[4]),
+    vol: Number(r[6])
+  }));
+}
+
+let cargandoAnalisis = false;
+
+async function actualizarAnalisis() {
+  if (cargandoAnalisis) return;
+  cargandoAnalisis = true;
+  try {
+    const r = await Promise.all([velasKraken(1440), velasKraken(10080)]);
+    ana.d = r[0];
+    ana.w = r[1];
+    ana.actualizado = new Date();
+    ana.error = "";
+  } catch (e) {
+    ana.error = "No se pudieron cargar las velas de Kraken.";
+  } finally {
+    cargandoAnalisis = false;
+  }
+  pintarAnalisis();
+}
+
+function conPrecioVivo(velasOrigen, duracion) {
+  if (velasOrigen.length === 0) return velasOrigen;
+  const copia = velasOrigen.slice();
+  const u = Object.assign({}, copia[copia.length - 1]);
+  const p = mercado.eur;
+  if (isFinite(p) && Date.now() / 1000 < u.time + duracion) {
+    u.close = p;
+    if (p > u.high) u.high = p;
+    if (p < u.low) u.low = p;
+  }
+  copia[copia.length - 1] = u;
+  return copia;
+}
+
+function rsiWilder(cierres, n) {
+  if (cierres.length < n + 1) return NaN;
+  let ganancia = 0;
+  let perdida = 0;
+  for (let i = 1; i <= n; i++) {
+    const d = cierres[i] - cierres[i - 1];
+    if (d > 0) ganancia += d;
+    else perdida -= d;
+  }
+  let mg = ganancia / n;
+  let mp = perdida / n;
+  for (let i = n + 1; i < cierres.length; i++) {
+    const d = cierres[i] - cierres[i - 1];
+    mg = (mg * (n - 1) + Math.max(d, 0)) / n;
+    mp = (mp * (n - 1) + Math.max(-d, 0)) / n;
+  }
+  if (mp === 0) return 100;
+  return 100 - 100 / (1 + mg / mp);
+}
+
+function mediaUltimos(valores, n) {
+  if (valores.length < n) return NaN;
+  let s = 0;
+  for (let i = valores.length - n; i < valores.length; i++) s += valores[i];
+  return s / n;
+}
+
+function indicadores() {
+  if (ana.d.length < 30 || ana.w.length < 20) return null;
+  const d = conPrecioVivo(ana.d, 86400);
+  const w = conPrecioVivo(ana.w, 604800);
+  const hoy = d[d.length - 1];
+  const cd = d.map((x) => x.close);
+  const cw = w.map((x) => x.close);
+  const m20 = mediaUltimos(cd, 20);
+  let q = 0;
+  for (let i = cd.length - 20; i < cd.length; i++) q += (cd[i] - m20) * (cd[i] - m20);
+  const sd = Math.sqrt(q / 20);
+  const volPrevios = d.slice(-21, -1).map((x) => x.vol);
+  const volMedia = volPrevios.reduce((s, x) => s + x, 0) / volPrevios.length;
+  let max182 = 0;
+  for (const x of d.slice(-182)) if (x.high > max182) max182 = x.high;
+  return {
+    hoy: hoy,
+    rsiD: rsiWilder(cd, 14),
+    rsiW: rsiWilder(cw, 14),
+    bbSup: m20 + 2 * sd,
+    bbMed: m20,
+    bbInf: m20 - 2 * sd,
+    volRel: hoy.vol / volMedia,
+    volMedia: volMedia,
+    ma200d: mediaUltimos(cd, 200),
+    ma20w: mediaUltimos(cw, 20),
+    ma200w: mediaUltimos(cw, 200),
+    max182: max182,
+    retroceso: (1 - hoy.low / max182) * 100
+  };
+}
+
+function evaluarSenal(ind) {
+  const v = ind.hoy;
+  const rango = v.high - v.low;
+  const cuerpo = Math.abs(v.close - v.open);
+  const mecha = Math.min(v.open, v.close) - v.low;
+  const zonas = datos.niveles.filter((n) => n.tipo === "zona" && n.estado === "activa" && isFinite(n.min));
+  const zona = zonas.find((z) => v.low <= techo(z) && v.high >= z.min) || null;
+  const rota = !!zona && v.close < zona.min;
+  const toqueBanda = v.low <= ind.bbInf;
+  const posCierre = rango > 0 ? (v.close - v.low) / rango : NaN;
+  const mechaOk = mecha / v.close >= 0.01 && mecha > cuerpo && posCierre >= 0.5;
+  const rechazo = toqueBanda || mechaOk;
+  const confirmacion = ind.rsiD < 45 || ind.volRel >= 1.3;
+  const capitulacion = ind.rsiD < 35 && ind.volRel >= 1.5;
+  const cerca200 = isFinite(ind.ma200w) && v.low <= ind.ma200w * 1.05;
+  const senal = !!zona && !rota && rechazo && confirmacion;
+  const pausa = datos.niveles.find((n) => n.tipo === "pausa" && n.estado !== "rota" && isFinite(n.min) && v.close < n.min) || null;
+  return {
+    zona: zona,
+    rota: rota,
+    toqueBanda: toqueBanda,
+    mecha: mecha,
+    cuerpo: cuerpo,
+    posCierre: posCierre,
+    mechaOk: mechaOk,
+    rechazo: rechazo,
+    confirmacion: confirmacion,
+    capitulacion: capitulacion,
+    cerca200: cerca200,
+    senal: senal,
+    fuerte: senal && (capitulacion || cerca200),
+    pausa: pausa
+  };
+}
+
+function eventosOrdenados() {
+  return datos.eventos
+    .map((e) => Object.assign({}, e, { ts: Date.parse(e.fecha + "T" + (e.hora || "00:00")) }))
+    .filter((e) => isFinite(e.ts))
+    .sort((a, b) => a.ts - b.ts);
+}
+
+function eventoProximo(horas) {
+  const ahora = Date.now();
+  return eventosOrdenados().find((e) => e.ts - ahora > -3600000 && e.ts - ahora <= horas * 3600000) || null;
+}
+
+function cuandoEvento(e) {
+  const d = new Date(e.ts);
+  return d.toLocaleDateString("es-ES", { weekday: "short", day: "numeric", month: "short" }) + " " + (e.hora || "");
+}
+
+function liquidezMarcada() {
+  try {
+    return localStorage.getItem(CLAVE_LIQUIDEZ) === "si";
+  } catch (e) {
+    return false;
+  }
+}
+
+function importeRecomendado(ind, s) {
+  if (!s.senal) return { importe: 0, texto: "Sin señal provisional: no corresponde compra." };
+  let base = 20;
+  let calidad = "normal";
+  if (s.capitulacion && s.cerca200) {
+    base = 50;
+    calidad = "capitulación y 200 semanas";
+  } else if (s.capitulacion || s.cerca200) {
+    base = 40;
+    calidad = s.capitulacion ? "capitulación" : "200 semanas";
+  }
+  const entrada = ind.hoy.close;
+  const invalidacion = s.zona.min;
+  const distancia = entrada > invalidacion ? (entrada - invalidacion) / entrada : 0;
+  const tope = distancia > 0 ? 2.5 / distancia : Infinity;
+  let importe = Math.min(base, tope);
+  const recortes = [];
+  const ev = eventoProximo(24);
+  if (ev) {
+    importe /= 2;
+    recortes.push("dato macro en menos de 24 h (" + ev.nombre + ")");
+  }
+  if (miedo.valor > 75) {
+    importe /= 2;
+    recortes.push("codicia por encima de 75");
+  }
+  if (liquidezMarcada()) {
+    importe /= 2;
+    recortes.push("liquidez sin barrer debajo");
+  }
+  const redondeado = Math.floor(importe / 5) * 5;
+  const partes = [
+    "calidad: " + calidad + " (" + base + " €)",
+    "riesgo hasta " + s.zona.nombre + " " + miles(invalidacion) + " €: " + fmtPct(-distancia * 100) + (isFinite(tope) ? " → tope " + Math.floor(tope) + " €" : ""),
+    recortes.length ? "recortes: " + recortes.join(", ") : "sin recortes"
+  ];
+  if (redondeado < 20) {
+    return { importe: 0, texto: "Sale " + Math.floor(importe) + " €: menos de 20 €, no compensa por la comisión. " + partes.join(" · ") };
+  }
+  return { importe: redondeado, texto: partes.join(" · ") };
+}
+
+function marca(ok) {
+  return ok ? "<span class=\"sube\">✔</span>" : "<span class=\"baja\">✖</span>";
+}
+
+function filaHtml(izquierda, derecha, clase) {
+  return "<div class=\"item\"><span>" + izquierda + "</span><span" + (clase ? " class=\"" + clase + "\"" : "") + ">" + derecha + "</span></div>";
+}
+
+function distanciaA(valor) {
+  if (!isFinite(valor) || !isFinite(mercado.eur)) return "";
+  return " (" + fmtPct((mercado.eur / valor - 1) * 100) + ")";
+}
+
+function pintarAnalisis() {
+  const elSenal = $("a-senal");
+  if (!elSenal) return;
+  $("a-cierre").textContent = $("p-cierre").textContent ? "cierra en " + $("p-cierre").textContent : "";
+  const ind = indicadores();
+  if (!ind) {
+    const msg = "<div class=\"vacio\">" + esc(ana.error || "Cargando velas de Kraken…") + "</div>";
+    elSenal.innerHTML = msg;
+    $("a-importe").innerHTML = msg;
+    $("a-indicadores").innerHTML = msg;
+  } else {
+    const s = evaluarSenal(ind);
+    const v = ind.hoy;
+    let html = "";
+    if (s.zona) {
+      html += filaHtml("Zona", s.rota
+        ? "Toca " + esc(s.zona.nombre) + ", pero cerraría por debajo: se rompería " + marca(false)
+        : "Toca " + esc(s.zona.nombre) + " (" + rangoTexto(s.zona) + " €) " + marca(true));
+    } else {
+      html += filaHtml("Zona", "No toca ninguna zona activa " + marca(false));
+    }
+    const detalleRechazo = (s.toqueBanda ? "toca la banda inferior (" + miles(ind.bbInf) + " €)" : "no toca la banda") +
+      " · mecha " + fmtPct((s.mecha / v.close) * 100).replace("+", "") + (s.mecha > s.cuerpo ? " > cuerpo" : " ≤ cuerpo") +
+      " · cierre al " + (isFinite(s.posCierre) ? Math.round(s.posCierre * 100) : "—") + " % del rango";
+    html += filaHtml("Rechazo", detalleRechazo + " " + marca(s.rechazo));
+    html += filaHtml("Confirmación", "RSI " + ind.rsiD.toLocaleString("es-ES", { maximumFractionDigits: 1 }) +
+      " · volumen " + ind.volRel.toLocaleString("es-ES", { maximumFractionDigits: 2 }) + "× " + marca(s.confirmacion));
+    html += filaHtml("Fuerza", "capitulación " + marca(s.capitulacion) + " · 200 semanas " + marca(s.cerca200));
+    let resultado = "Sin señal";
+    let clase = "baja";
+    if (s.senal) {
+      resultado = s.fuerte ? "Señal FUERTE (provisional)" : "Señal normal (provisional)";
+      clase = "sube";
+    }
+    html += filaHtml("<b>Resultado</b>", "<b>" + resultado + "</b>", clase);
+    if (s.pausa) html += filaHtml("Pausa", "Cerraría por debajo de " + miles(s.pausa.min) + " €: el widget se pausaría", "baja");
+    html += "<div class=\"vacio\">El volumen de hoy es parcial hasta el cierre: la capitulación (1,5×) puede cumplirse más tarde.</div>";
+    elSenal.innerHTML = html;
+
+    const imp = importeRecomendado(ind, s);
+    const widget = s.senal ? (s.fuerte ? 40 : 20) : 0;
+    $("a-importe").innerHTML =
+      filaHtml("Widget (regla actual)", widget ? widget + " €" : "—") +
+      filaHtml("Regla nueva (hasta 50 €)", imp.importe ? "<b>" + imp.importe + " €</b>" : "—", imp.importe ? "sube" : "") +
+      "<div class=\"vacio\">" + esc(imp.texto) + "</div>";
+
+    const f1 = (x) => x.toLocaleString("es-ES", { maximumFractionDigits: 1 });
+    $("a-indicadores").innerHTML =
+      filaHtml("RSI diario · semanal", f1(ind.rsiD) + " · " + f1(ind.rsiW)) +
+      filaHtml("Bollinger diario", miles(ind.bbInf) + " / " + miles(ind.bbMed) + " / " + miles(ind.bbSup) + " €") +
+      filaHtml("Volumen hoy <span class=\"sec\">media 20 d " + f1(ind.volMedia) + " BTC</span>", f1(v.vol) + " BTC (" + ind.volRel.toLocaleString("es-ES", { maximumFractionDigits: 2 }) + "×)") +
+      filaHtml("Media 200 días", fmtEur(ind.ma200d) + distanciaA(ind.ma200d)) +
+      filaHtml("Media 20 semanas", fmtEur(ind.ma20w) + distanciaA(ind.ma20w)) +
+      filaHtml("Media 200 semanas", fmtEur(ind.ma200w) + distanciaA(ind.ma200w)) +
+      filaHtml("Retroceso desde máx. 182 días", f1(ind.retroceso) + " % (máx. " + miles(ind.max182) + " €)");
+  }
+
+  const elDer = $("a-derivados");
+  $("a-der-act").textContent = der.actualizado ? der.actualizado.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }) : "—";
+  if (!der.datos) {
+    elDer.innerHTML = "<div class=\"vacio\">" + esc(der.error || "Cargando derivados…") + "</div>";
+  } else {
+    const d = der.datos;
+    const pct = (x, dec) => (isFinite(x) ? fmtPct(x, dec) : "—");
+    elDer.innerHTML =
+      filaHtml("Financiación <span class=\"sec\">cada 8 h</span>", pct(d.financiacion, 4), d.financiacion > 0 ? "" : "sube") +
+      filaHtml("Interés abierto", isFinite(d.oi) ? (d.oi / 1e9).toLocaleString("es-ES", { maximumFractionDigits: 1 }) + " mil M$ (" + pct(d.oiCambio) + " en 24 h)" : "—") +
+      filaHtml("Cuentas en largo", isFinite(d.cuentasLargo) ? d.cuentasLargo.toLocaleString("es-ES", { maximumFractionDigits: 1 }) + " %" : "—") +
+      filaHtml("Grandes traders en largo <span class=\"sec\">posición</span>", isFinite(d.topLargo) ? d.topLargo.toLocaleString("es-ES", { maximumFractionDigits: 1 }) + " %" : "—") +
+      filaHtml("Compras / ventas agresivas <span class=\"sec\">24 h</span>", isFinite(d.agresivos) ? d.agresivos.toLocaleString("es-ES", { maximumFractionDigits: 2 }) : "—", d.agresivos >= 1 ? "sube" : "baja") +
+      filaHtml("Prima de Coinbase", pct(d.primaCoinbase, 3), d.primaCoinbase >= 0 ? "sube" : "baja");
+  }
+
+  pintarEventos();
+}
+
+async function actualizarDerivados() {
+  const r = await Promise.allSettled([
+    getJSON("https://fapi.binance.com/fapi/v1/premiumIndex?symbol=BTCUSDT"),
+    getJSON("https://fapi.binance.com/futures/data/openInterestHist?symbol=BTCUSDT&period=1h&limit=25"),
+    getJSON("https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=BTCUSDT&period=1h&limit=1"),
+    getJSON("https://fapi.binance.com/futures/data/topLongShortPositionRatio?symbol=BTCUSDT&period=1h&limit=1"),
+    getJSON("https://fapi.binance.com/futures/data/takerlongshortRatio?symbol=BTCUSDT&period=1h&limit=24"),
+    getJSON("https://api.exchange.coinbase.com/products/BTC-USD/ticker"),
+    getJSON("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT")
+  ]);
+  const valor = (i) => (r[i].status === "fulfilled" ? r[i].value : null);
+  const d = {};
+  const pi = valor(0);
+  if (pi && isFinite(Number(pi.lastFundingRate))) d.financiacion = Number(pi.lastFundingRate) * 100;
+  const oi = valor(1);
+  if (Array.isArray(oi) && oi.length >= 2) {
+    const a = Number(oi[0].sumOpenInterestValue);
+    const b = Number(oi[oi.length - 1].sumOpenInterestValue);
+    d.oi = b;
+    d.oiCambio = (b / a - 1) * 100;
+  }
+  const ls = valor(2);
+  if (Array.isArray(ls) && ls[0]) d.cuentasLargo = Number(ls[0].longAccount) * 100;
+  const tp = valor(3);
+  if (Array.isArray(tp) && tp[0]) d.topLargo = Number(tp[0].longAccount) * 100;
+  const tk = valor(4);
+  if (Array.isArray(tk) && tk.length) {
+    let compras = 0;
+    let ventas = 0;
+    for (const x of tk) {
+      compras += Number(x.buyVol);
+      ventas += Number(x.sellVol);
+    }
+    d.agresivos = ventas > 0 ? compras / ventas : NaN;
+  }
+  const cb = valor(5);
+  const bn = valor(6);
+  if (cb && bn && Number(bn.price) > 0) d.primaCoinbase = (Number(cb.price) / Number(bn.price) - 1) * 100;
+  if (Object.keys(d).length) {
+    der.datos = d;
+    der.actualizado = new Date();
+    der.error = "";
+  } else {
+    der.error = "No se pudieron cargar los derivados.";
+  }
+  pintarAnalisis();
+}
+
+function pintarEventos() {
+  const el = $("l-eventos");
+  if (!el) return;
+  const lista = eventosOrdenados().filter((e) => e.ts > Date.now() - 3 * 86400000);
+  if (lista.length === 0) {
+    el.innerHTML = "<div class=\"vacio\">No hay datos macro apuntados.</div>";
+    return;
+  }
+  const ahora = Date.now();
+  el.innerHTML = lista.map((e) => {
+    const horas = (e.ts - ahora) / 3600000;
+    let estado = "";
+    if (horas < -1) estado = "<span class=\"etiqueta rota\">Pasado</span>";
+    else if (horas <= 24) estado = "<span class=\"etiqueta comprada\">En " + Math.max(0, Math.round(horas)) + " h</span>";
+    return "<div class=\"registro\">" +
+      "<div class=\"titulo\"><span>" + esc(e.nombre) + "</span>" + estado + "</div>" +
+      "<div class=\"detalle\">" + esc(cuandoEvento(e)) + "</div>" +
+      "<div class=\"acciones\"><button type=\"button\" class=\"peligro\" data-borrar-evento=\"" + esc(e.id) + "\">Borrar</button></div>" +
+    "</div>";
+  }).join("");
+}
+
+function guardarEvento(ev) {
+  ev.preventDefault();
+  const fecha = $("e-fecha").value;
+  const hora = $("e-hora").value || "00:00";
+  const nombre = $("e-nombre").value.trim();
+  if (!fecha || !nombre) {
+    $("e-error").textContent = "Pon la fecha y el nombre del dato.";
+    return;
+  }
+  $("e-error").textContent = "";
+  datos.eventos.push({ id: nuevoId(), fecha: fecha, hora: hora, nombre: nombre });
+  if (guardar()) {
+    $("e-nombre").value = "";
+    avisoTemporal("Dato macro guardado.", "ok");
+    pintarEventos();
+    revisarAvisos();
+    pintarAnalisis();
+  }
+}
+
+function borrarEvento(id) {
+  if (!window.confirm("¿Borrar este dato macro?")) return;
+  datos.eventos = datos.eventos.filter((e) => e.id !== id);
+  if (guardar()) {
+    pintarEventos();
+    revisarAvisos();
+    pintarAnalisis();
+  }
+}
+
+function textoParaClaude() {
+  const ahora = new Date();
+  const l = [];
+  const f1 = (x) => (isFinite(x) ? x.toLocaleString("es-ES", { maximumFractionDigits: 1 }) : "—");
+  l.push("BTC Zonas · " + ahora.toLocaleString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) + " (hora de España)");
+  l.push("Precio: " + fmtEur(mercado.eur) + " (" + (mercado.fuente || "—") + ") · " + miles(mercado.usd) + " $ · 24 h " + fmtPct(mercado.cambio24));
+  const ind = indicadores();
+  if (ind) {
+    const v = ind.hoy;
+    const s = evaluarSenal(ind);
+    l.push("Vela diaria en curso (cierra en " + $("p-cierre").textContent + "): apertura " + miles(v.open) + " · máx " + miles(v.high) + " · mín " + miles(v.low) + " · actual " + miles(v.close) + " · volumen " + f1(v.vol) + " BTC (" + ind.volRel.toLocaleString("es-ES", { maximumFractionDigits: 2 }) + "× media 20 d)");
+    l.push("RSI diario " + f1(ind.rsiD) + " · RSI semanal " + f1(ind.rsiW) + " · Bollinger diario " + miles(ind.bbInf) + " / " + miles(ind.bbMed) + " / " + miles(ind.bbSup));
+    l.push("Medias: 200 d " + miles(ind.ma200d) + distanciaA(ind.ma200d) + " · 20 sem " + miles(ind.ma20w) + distanciaA(ind.ma20w) + " · 200 sem " + miles(ind.ma200w) + distanciaA(ind.ma200w));
+    l.push("Retroceso desde máx. 182 d (" + miles(ind.max182) + "): " + f1(ind.retroceso) + " %");
+    l.push("Señal provisional: zona " + (s.zona ? s.zona.nombre + (s.rota ? " (cerraría rota)" : "") : "ninguna") +
+      " · rechazo " + (s.rechazo ? "sí" : "no") + " (banda " + (s.toqueBanda ? "sí" : "no") + ", mecha " + f1((s.mecha / v.close) * 100) + " %, cierre al " + (isFinite(s.posCierre) ? Math.round(s.posCierre * 100) : "—") + " % del rango)" +
+      " · confirmación " + (s.confirmacion ? "sí" : "no") +
+      " · capitulación " + (s.capitulacion ? "sí" : "no") + " · 200 sem " + (s.cerca200 ? "sí" : "no") +
+      " → " + (s.senal ? (s.fuerte ? "FUERTE" : "normal") : "sin señal") + (s.pausa ? " · cerraría bajo la pausa" : ""));
+    const imp = importeRecomendado(ind, s);
+    l.push("Importe: widget " + (s.senal ? (s.fuerte ? 40 : 20) + " €" : "—") + " · regla nueva " + (imp.importe ? imp.importe + " €" : "—") + " (" + imp.texto + ")");
+  } else {
+    l.push("Indicadores: sin datos de velas.");
+  }
+  l.push("Miedo y codicia: " + (isFinite(miedo.valor) ? miedo.valor + " " + miedo.texto : "—") + " · ayer " + (miedo.ayer || "—") + " · hace 7 d " + (miedo.semana || "—"));
+  if (der.datos) {
+    const d = der.datos;
+    l.push("Derivados Binance: financiación " + (isFinite(d.financiacion) ? fmtPct(d.financiacion, 4) : "—") + "/8 h · interés abierto " + (isFinite(d.oi) ? (d.oi / 1e9).toLocaleString("es-ES", { maximumFractionDigits: 1 }) + " mil M$ (" + fmtPct(d.oiCambio) + " 24 h)" : "—") +
+      " · cuentas en largo " + f1(d.cuentasLargo) + " % · grandes traders en largo " + f1(d.topLargo) + " % · compras/ventas agresivas 24 h " + (isFinite(d.agresivos) ? d.agresivos.toLocaleString("es-ES", { maximumFractionDigits: 2 }) : "—") +
+      " · prima Coinbase " + (isFinite(d.primaCoinbase) ? fmtPct(d.primaCoinbase, 3) : "—"));
+  }
+  if (liq.niveles.length) {
+    const P = liq.precioUsd;
+    const f = factorEur();
+    const abajo = [1, 3, 5].map((x) => millones(sumaLiq("largo", P * (1 - x / 100), P))).join(" / ");
+    const arriba = [1, 3, 5].map((x) => millones(sumaLiq("corto", P, P * (1 + x / 100)))).join(" / ");
+    const g = (n, lado) => (n ? (isFinite(f) ? miles(n.precio * f) + " €" : miles(n.precio) + " $") + " (" + fmtPct((n.precio / P - 1) * 100) + ", " + millones(n[lado]) + ")" : "—");
+    l.push("Liquidaciones estimadas 7 d (modelo propio): si baja 1/3/5 % " + abajo + " · si sube 1/3/5 % " + arriba + " · mayor grupo debajo " + g(mayorGrupo("largo"), "largo") + " · encima " + g(mayorGrupo("corto"), "corto"));
+  }
+  const zonas = datos.niveles.slice().sort((a, b) => b.min - a.min).map((n) => n.nombre + " " + rangoTexto(n) + " " + (NOMBRE_ESTADO[n.estado] || n.estado).toLowerCase());
+  l.push("Niveles: " + zonas.join(" · "));
+  const proximos = eventosOrdenados().filter((e) => e.ts > Date.now() - 3600000).slice(0, 4).map((e) => e.nombre + " " + cuandoEvento(e));
+  l.push("Datos macro apuntados: " + (proximos.length ? proximos.join(" · ") : "ninguno"));
+  const r = resumenCartera();
+  const valorActual = r.btc * mercado.eur;
+  l.push("Cartera: " + fmtBtc(r.btc) + " BTC · invertido " + fmtEur(r.total, 2) + " · precio medio " + fmtEur(r.medio) + " · resultado " + fmtEur(valorActual - r.total, 2) + " (" + fmtPct(((valorActual - r.total) / r.total) * 100) + ")");
+  return l.join("\n");
+}
+
+async function copiarParaClaude() {
+  const texto = textoParaClaude();
+  let copiado = false;
+  try {
+    await navigator.clipboard.writeText(texto);
+    copiado = true;
+  } catch (e) {
+    const t = document.createElement("textarea");
+    t.value = texto;
+    t.setAttribute("readonly", "");
+    t.style.position = "absolute";
+    t.style.left = "-9999px";
+    document.body.appendChild(t);
+    t.select();
+    try {
+      copiado = document.execCommand("copy");
+    } catch (e2) {
+      copiado = false;
+    }
+    t.remove();
+  }
+  const caja = $("copiar-texto");
+  if (copiado) {
+    $("copiar-estado").textContent = "Copiado. Pégalo en el chat con Claude.";
+    caja.classList.add("oculto");
+  } else {
+    $("copiar-estado").textContent = "No se pudo copiar solo: mantén pulsado el texto, Seleccionar todo y Copiar.";
+    caja.value = texto;
+    caja.classList.remove("oculto");
+  }
+}
+
 /* ---------- calculadora ---------- */
 
 function botonesRapidos(contenedor, opciones, destino) {
@@ -1307,7 +1809,8 @@ async function exportar() {
     exportado: new Date().toISOString(),
     niveles: datos.niveles,
     compras: datos.compras,
-    notas: datos.notas
+    notas: datos.notas,
+    eventos: datos.eventos
   }, null, 2);
   const nombre = "btc-zonas-" + hoyLocal() + ".json";
   try {
@@ -1380,6 +1883,7 @@ function irA(vista) {
   }
   if (vista === "grafico") abrirGrafico();
   if (vista === "calc") prepararCalculadora();
+  if (vista === "analisis") pintarAnalisis();
   window.scrollTo(0, 0);
 }
 
@@ -1396,6 +1900,7 @@ function refrescarTodo() {
   pintarNotas();
   if (chart && velas.length) construirSeries();
   if ($("v-calc").classList.contains("activa")) prepararCalculadora();
+  pintarAnalisis();
 }
 
 /* ---------- arranque ---------- */
@@ -1403,6 +1908,7 @@ function refrescarTodo() {
 let temporizadorPrecios = null;
 let temporizadorMiedo = null;
 let temporizadorLiq = null;
+let temporizadorAnalisis = null;
 
 function arrancarTemporizadores() {
   clearInterval(temporizadorPrecios);
@@ -1411,12 +1917,18 @@ function arrancarTemporizadores() {
   temporizadorMiedo = setInterval(actualizarMiedo, 30 * 60000);
   clearInterval(temporizadorLiq);
   temporizadorLiq = setInterval(calcularLiquidaciones, 10 * 60000);
+  clearInterval(temporizadorAnalisis);
+  temporizadorAnalisis = setInterval(() => {
+    actualizarAnalisis();
+    actualizarDerivados();
+  }, 5 * 60000);
 }
 
 function pararTemporizadores() {
   clearInterval(temporizadorPrecios);
   clearInterval(temporizadorMiedo);
   clearInterval(temporizadorLiq);
+  clearInterval(temporizadorAnalisis);
 }
 
 function iniciar() {
@@ -1436,6 +1948,18 @@ function iniciar() {
   }));
 
   $("b-centrar").addEventListener("click", centrarGrafico);
+  $("b-copiar").addEventListener("click", copiarParaClaude);
+  $("f-evento").addEventListener("submit", guardarEvento);
+  $("e-fecha").value = hoyLocal();
+  $("a-liquidez").checked = liquidezMarcada();
+  $("a-liquidez").addEventListener("change", (ev) => {
+    try {
+      localStorage.setItem(CLAVE_LIQUIDEZ, ev.target.checked ? "si" : "no");
+    } catch (e) {
+      /* sin almacenamiento */
+    }
+    pintarAnalisis();
+  });
   $("b-liq").addEventListener("click", alternarLiquidaciones);
 
   ["c-importe", "c-comision", "c-entrada", "c-inval", "c-objetivo"].forEach((id) => $(id).addEventListener("input", calcular));
@@ -1466,6 +1990,7 @@ function iniciar() {
     else if (b.dataset.borrarNivel) borrarNivel(b.dataset.borrarNivel);
     else if (b.dataset.borrarCompra) borrarCompra(b.dataset.borrarCompra);
     else if (b.dataset.borrarNota) borrarNota(b.dataset.borrarNota);
+    else if (b.dataset.borrarEvento) borrarEvento(b.dataset.borrarEvento);
   });
 
   $("b-exportar").addEventListener("click", exportar);
@@ -1478,6 +2003,8 @@ function iniciar() {
       actualizarPrecios();
       actualizarMiedo();
       calcularLiquidaciones();
+      actualizarAnalisis();
+      actualizarDerivados();
       conectarDirecto();
       arrancarTemporizadores();
       if (chart && $("v-grafico").classList.contains("activa")) cargarVelas();
@@ -1503,7 +2030,11 @@ function iniciar() {
   }
   irA(vistaInicial);
 
-  actualizarPrecios().then(calcularLiquidaciones);
+  actualizarPrecios().then(() => {
+    calcularLiquidaciones();
+    actualizarAnalisis();
+    actualizarDerivados();
+  });
   actualizarMiedo();
   conectarDirecto();
   arrancarTemporizadores();
