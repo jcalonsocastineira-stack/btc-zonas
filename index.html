@@ -117,6 +117,18 @@
       </div>
 
       <div class="tarjeta">
+        <div class="etq">Escenarios al cierre · simulación</div>
+        <div id="a-escenarios" class="lista-simple"></div>
+        <div class="formulario" style="margin-top:12px">
+          <label>Simular cierre en (€)
+            <input id="a-sim" type="text" inputmode="decimal" placeholder="54.000" autocomplete="off">
+          </label>
+        </div>
+        <div id="a-sim-res" class="lista-simple"></div>
+        <p class="nota">Probabilidades aproximadas con la volatilidad de los últimos 30 días; el volumen se toma como va ahora. El historial es de las señales reconstruidas de 2017–2026. Es orientativo: decide el widget al cierre.</p>
+      </div>
+
+      <div class="tarjeta">
         <div class="etq">Importe recomendado · segunda opinión</div>
         <div id="a-importe" class="lista-simple"></div>
         <label class="interruptor"><input type="checkbox" id="a-liquidez"> Hay liquidez grande sin barrer justo debajo</label>
@@ -188,6 +200,9 @@
           <input id="c-objetivo" type="text" inputmode="decimal" autocomplete="off">
         </label>
         <div class="botones-rapidos" id="c-obj-rapidos"></div>
+        <label>Zona de la compra
+          <select id="c-zona"></select>
+        </label>
       </div>
       <div class="tarjeta" id="c-resultado"></div>
       <button type="button" class="primario ancho" id="c-registrar">Registrar esta compra</button>
@@ -263,6 +278,9 @@
           </div>
           <label>BTC recibidos
             <input id="k-btc" type="text" inputmode="decimal" placeholder="si lo dejas vacío, se calcula" autocomplete="off">
+          </label>
+          <label>Zona de la compra
+            <select id="k-zona"></select>
           </label>
           <label>Nota
             <input id="k-nota" type="text" placeholder="Z6 señal fuerte" autocomplete="off">

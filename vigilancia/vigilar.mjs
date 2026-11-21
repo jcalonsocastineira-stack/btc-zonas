@@ -21,6 +21,7 @@ const estado = primeraVez
   : JSON.parse(fs.readFileSync(F_ESTADO, "utf8"));
 estado.avisos = estado.avisos || {};
 estado.rotas = estado.rotas || {};
+estado.rearmadas = estado.rearmadas || {};
 
 const TOPIC = process.env.NTFY_TOPIC || "";
 const PRUEBA = process.env.PRUEBA === "1";
@@ -128,8 +129,15 @@ function indicadoresEn(dias, i, semanas) {
   };
 }
 
+const claveCompra = (z) => (z.rearme ? z.id + "-" + z.rearme.desde : "");
+
 function zonasVigentes() {
-  return CONFIG.zonas.map((z) => Object.assign({}, z, { estado: estado.rotas[z.id] ? "rota" : z.estado }));
+  return CONFIG.zonas.map((z) => {
+    let e = z.estado;
+    if (e === "comprada" && z.rearme && estado.rearmadas[claveCompra(z)]) e = "activa";
+    if (estado.rotas[z.id] && e !== "comprada") e = "rota";
+    return Object.assign({}, z, { estado: e });
+  });
 }
 
 function evaluar(ind) {
@@ -233,6 +241,18 @@ async function main() {
     const s = evaluar(ind);
     const regla = importeRegla(ind, s, miedo, x.t + DIA);
     const fecha = fechaCorta(x.t);
+
+    // rearme: zona comprada que cierra un 5 % por debajo del precio pagado y sigue dentro de la zona
+    for (const z of zonasVigentes()) {
+      if (z.estado !== "comprada" || !z.rearme) continue;
+      const desde = Date.parse(z.rearme.desde + "T00:00:00Z") / 1000;
+      if (x.t >= desde && x.c < z.rearme.umbral && x.c >= z.min * 0.985 && !estado.rearmadas[claveCompra(z)]) {
+        estado.rearmadas[claveCompra(z)] = dia(x.t);
+        delete estado.rotas[z.id];
+        await avisar("rearme-" + claveCompra(z), z.id + " vuelve a estar disponible",
+          "La vela del " + fecha + " cerró en " + eur(x.c) + ", por debajo del nivel de rearme (" + eur(z.rearme.umbral) + ") y dentro de la zona. Si hay señal, podrás volver a comprar en " + z.id + ".", 4, ["recycle"]);
+      }
+    }
 
     if (s.rota && !estado.rotas[s.rota.id]) {
       estado.rotas[s.rota.id] = dia(x.t);

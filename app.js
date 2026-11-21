@@ -21,10 +21,10 @@ const DATOS_SISTEMA = {
     { id: "pausa", nombre: "Pausa", tipo: "pausa", min: 50650, max: null, estado: "activa", nota: "El widget se pausa si una vela cierra por debajo" }
   ],
   compras: [
-    { id: "c1", fecha: "2026-10-10", precio: 74139.97, btc: 0.000674, total: 50.97, comision: 1, nota: "Antes del sistema" },
-    { id: "c2", fecha: "2026-10-25", precio: 72605.57, btc: 0.000275, total: 20.97, comision: 1, nota: "Z2" },
-    { id: "c3", fecha: "2026-10-31", precio: 69721.29, btc: 0.000286, total: 20.94, comision: 1, nota: "Z3" },
-    { id: "c4", fecha: "2026-11-16", precio: 59213.25, btc: 0.000675, total: 40.97, comision: 1, nota: "Z5 señal fuerte" }
+    { id: "c1", fecha: "2026-10-10", precio: 74139.97, btc: 0.000674, total: 50.97, comision: 1, nota: "Antes del sistema", zona: "" },
+    { id: "c2", fecha: "2026-10-25", precio: 72605.57, btc: 0.000275, total: 20.97, comision: 1, nota: "Z2", zona: "z2" },
+    { id: "c3", fecha: "2026-10-31", precio: 69721.29, btc: 0.000286, total: 20.94, comision: 1, nota: "Z3", zona: "z3" },
+    { id: "c4", fecha: "2026-11-16", precio: 59213.25, btc: 0.000675, total: 40.97, comision: 1, nota: "Z5 señal fuerte", zona: "z5" }
   ],
   notas: [],
   eventos: [
@@ -139,6 +139,14 @@ function copiaSistema() {
 }
 
 function normalizar(d) {
+  if (d && Array.isArray(d.compras) && Array.isArray(d.niveles)) {
+    for (const c of d.compras) {
+      if (c.zona !== undefined) continue;
+      const m = /^\s*(Z\d+)/i.exec(c.nota || "");
+      const z = m ? d.niveles.find((n) => String(n.nombre).toUpperCase() === m[1].toUpperCase()) : null;
+      c.zona = z ? z.id : "";
+    }
+  }
   return {
     niveles: Array.isArray(d && d.niveles) ? d.niveles : [],
     compras: Array.isArray(d && d.compras) ? d.compras : [],
@@ -701,6 +709,10 @@ function construirSeries() {
     }
   }
 
+  for (const r of infoRearme()) {
+    serieVelas.createPriceLine({ price: r.umbral, color: "#378ADD", lineWidth: 1, lineStyle: 3, axisLabelVisible: true, title: "Rearme " + r.zona.nombre });
+  }
+
   const marcas = [];
   for (const c of datos.compras) {
     const ts = Date.parse(c.fecha + "T00:00:00Z") / 1000;
@@ -1129,15 +1141,16 @@ async function actualizarAnalisis() {
   } finally {
     cargandoAnalisis = false;
   }
+  revisarRearme();
   pintarAnalisis();
   dibujarFib();
 }
 
-function conPrecioVivo(velasOrigen, duracion) {
+function conPrecioVivo(velasOrigen, duracion, precio) {
   if (velasOrigen.length === 0) return velasOrigen;
   const copia = velasOrigen.slice();
   const u = Object.assign({}, copia[copia.length - 1]);
-  const p = mercado.eur;
+  const p = precio !== undefined ? precio : mercado.eur;
   if (isFinite(p) && Date.now() / 1000 < u.time + duracion) {
     u.close = p;
     if (p > u.high) u.high = p;
@@ -1174,10 +1187,10 @@ function mediaUltimos(valores, n) {
   return s / n;
 }
 
-function indicadores() {
+function indicadores(precio) {
   if (ana.d.length < 30 || ana.w.length < 20) return null;
-  const d = conPrecioVivo(ana.d, 86400);
-  const w = conPrecioVivo(ana.w, 604800);
+  const d = conPrecioVivo(ana.d, 86400, precio);
+  const w = conPrecioVivo(ana.w, 604800, precio);
   const hoy = d[d.length - 1];
   const ayer = d[d.length - 2];
   const cd = d.map((x) => x.close);
@@ -1408,6 +1421,9 @@ function pintarAnalisis() {
     }
     html += filaHtml("<b>Resultado</b>", "<b>" + resultado + "</b>", clase);
     if (s.pausa) html += filaHtml("Pausa", "Cerraría por debajo de " + miles(s.pausa.min) + " €: el widget se pausaría", "baja");
+    for (const r of infoRearme()) {
+      html += filaHtml("Rearme " + esc(r.zona.nombre), "si cierra bajo " + miles(r.umbral) + " € y sobre " + miles(r.suelo) + " € (compra a " + miles(Number(r.compra.precio)) + " €)");
+    }
     html += "<div class=\"vacio\">Misma lógica que el widget (modelo v2). El volumen es parcial hasta el cierre. La app no conoce tu espera entre compras: si el widget la tiene activa, manda el widget.</div>";
     elSenal.innerHTML = html;
 
@@ -1446,6 +1462,8 @@ function pintarAnalisis() {
   }
 
   pintarFib();
+  pintarEscenarios();
+  pintarSimulacion();
   pintarEventos();
 }
 
@@ -1592,6 +1610,8 @@ function textoParaClaude() {
   }
   const zonas = datos.niveles.slice().sort((a, b) => b.min - a.min).map((n) => n.nombre + " " + rangoTexto(n) + " " + (NOMBRE_ESTADO[n.estado] || n.estado).toLowerCase());
   l.push("Niveles: " + zonas.join(" · "));
+  const rearmes = infoRearme().map((r) => r.zona.nombre + " se rearma si cierra bajo " + miles(r.umbral) + " € y sobre " + miles(r.suelo) + " €");
+  if (rearmes.length) l.push("Rearme: " + rearmes.join(" · "));
   const proximos = eventosOrdenados().filter((e) => e.ts > Date.now() - 3600000).slice(0, 4).map((e) => e.nombre + " " + cuandoEvento(e));
   l.push("Datos macro apuntados: " + (proximos.length ? proximos.join(" · ") : "ninguno"));
   const r = resumenCartera();
@@ -1632,6 +1652,215 @@ async function copiarParaClaude() {
   }
 }
 
+/* ---------- simulador de escenarios al cierre ---------- */
+
+const HISTORIAL = {
+  fuerte: { casos: 57, baja5: 65, sube5: 63, arriba7: 58, arriba30: 53, arriba90: 68, mediana90: 11.2 },
+  normal: { casos: 66, baja5: 73, sube5: 53, arriba7: 47, arriba30: 52, arriba90: 47, mediana90: -7.8 }
+};
+
+function normalAcum(z) {
+  const t = 1 / (1 + 0.3275911 * Math.abs(z) / Math.SQRT2);
+  const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-(z * z) / 2);
+  return z >= 0 ? (1 + y) / 2 : (1 - y) / 2;
+}
+
+function volatilidadDiaria() {
+  const c = ana.d.slice(-31).map((x) => x.close);
+  const r = [];
+  for (let i = 1; i < c.length; i++) r.push(Math.log(c[i] / c[i - 1]));
+  if (r.length < 10) return NaN;
+  const m = r.reduce((s, x) => s + x, 0) / r.length;
+  return Math.sqrt(r.reduce((s, x) => s + (x - m) * (x - m), 0) / (r.length - 1));
+}
+
+function resultadoEn(precio) {
+  const ind = indicadores(precio);
+  if (!ind) return null;
+  const s = evaluarSenal(ind);
+  const imp = importeRecomendado(ind, s);
+  let texto = "Sin señal";
+  let tipo = "nada";
+  if (s.rota) {
+    texto = (s.zonaRota ? s.zonaRota.nombre : "Zona") + " rota";
+    tipo = "rota";
+  } else if (s.compra) {
+    texto = (s.fuerte ? "FUERTE" : "Normal") + " · widget " + s.importeWidget + " € · regla " + (imp.importe ? imp.importe + " €" : "no compra");
+    tipo = s.fuerte ? "fuerte" : "normal";
+  } else if (s.cautela) {
+    texto = "Con cautela: no se compra";
+  } else if (s.senal && s.comprada) {
+    texto = "Zona ya comprada";
+  }
+  if (s.pausa) {
+    texto += " · pausa";
+    tipo = "rota";
+  }
+  return { texto: texto, tipo: tipo, s: s };
+}
+
+function pintarEscenarios() {
+  const el = $("a-escenarios");
+  if (!el) return;
+  const ind = indicadores();
+  const sigma = volatilidadDiaria();
+  if (!ind || !isFinite(sigma) || !isFinite(mercado.eur)) {
+    el.innerHTML = "<div class=\"vacio\">Cargando datos…</div>";
+    return;
+  }
+  const p0 = mercado.eur;
+  const quedan = Math.max(0, ind.hoy.time + 86400 - Date.now() / 1000);
+  const s = Math.max(sigma * Math.sqrt(quedan / 86400), 0.0005);
+  const paso = p0 * 0.0025;
+  const desde = Math.floor(Math.min(p0 * Math.exp(-3.5 * s), ind.hoy.low * 0.98) / paso) * paso;
+  const hasta = Math.ceil((p0 * Math.exp(3.5 * s)) / paso) * paso;
+  const tramos = [];
+  for (let p = desde; p <= hasta + 1; p += paso) {
+    const r = resultadoEn(p);
+    if (!r) continue;
+    const u = tramos[tramos.length - 1];
+    if (u && u.texto === r.texto) u.hasta = p;
+    else tramos.push({ texto: r.texto, tipo: r.tipo, desde: p, hasta: p });
+  }
+  const prob = (a, b) => normalAcum(Math.log(b / p0) / s) - normalAcum(Math.log(a / p0) / s);
+  const filas = tramos.reverse().map((t, i, lista) => {
+    const arriba = i === 0 ? Infinity : t.hasta + paso / 2;
+    const abajo = i === lista.length - 1 ? 0.000001 : t.desde - paso / 2;
+    const pr = prob(abajo, arriba === Infinity ? p0 * 100 : arriba) * 100;
+    const rango = i === 0 ? "más de " + miles(abajo) + " €" : i === lista.length - 1 ? "menos de " + miles(arriba) + " €" : miles(abajo) + "–" + miles(arriba) + " €";
+    const clase = t.tipo === "fuerte" || t.tipo === "normal" ? "sube" : t.tipo === "rota" ? "baja" : "";
+    return filaHtml("Cierre " + rango + " <span class=\"sec\">" + (pr < 1 ? "< 1" : Math.round(pr)) + " %</span>", esc(t.texto), clase);
+  });
+  const h = Math.floor(quedan / 3600);
+  const m = Math.floor((quedan % 3600) / 60);
+  let html = "<div class=\"vacio\">Precio " + fmtEur(p0) + " · cierre en " + h + " h " + String(m).padStart(2, "0") + " min · volatilidad diaria " + (sigma * 100).toLocaleString("es-ES", { maximumFractionDigits: 1 }) + " %</div>" + filas.join("");
+  const actual = resultadoEn(p0);
+  if (actual && (actual.tipo === "fuerte" || actual.tipo === "normal")) {
+    const hi = HISTORIAL[actual.tipo];
+    html += "<div class=\"vacio\">Después de " + hi.casos + " señales " + (actual.tipo === "fuerte" ? "fuertes" : "normales") + " (2017–2026):</div>" +
+      filaHtml("En 7 días baja un 5 % en algún momento", hi.baja5 + " %") +
+      filaHtml("En 7 días sube un 5 % en algún momento", hi.sube5 + " %") +
+      filaHtml("Más arriba a los 7 / 30 días", hi.arriba7 + " % / " + hi.arriba30 + " %") +
+      filaHtml("Más arriba a los 90 días <span class=\"sec\">mediana " + fmtPct(hi.mediana90) + "</span>", hi.arriba90 + " %", hi.arriba90 >= 60 ? "sube" : "baja");
+  }
+  el.innerHTML = html;
+}
+
+function pintarSimulacion() {
+  const el = $("a-sim-res");
+  if (!el) return;
+  const p = num($("a-sim").value);
+  if (!(p > 0)) {
+    el.innerHTML = "<div class=\"vacio\">Escribe un precio para ver qué diría el sistema si la vela cerrara ahí.</div>";
+    return;
+  }
+  const ind = indicadores(p);
+  if (!ind) {
+    el.innerHTML = "<div class=\"vacio\">Cargando datos…</div>";
+    return;
+  }
+  const s = evaluarSenal(ind);
+  const imp = importeRecomendado(ind, s);
+  const r = resultadoEn(p);
+  let html = filaHtml("<b>Resultado</b>", "<b>" + esc(r.texto) + "</b>", r.tipo === "fuerte" || r.tipo === "normal" ? "sube" : r.tipo === "rota" ? "baja" : "");
+  html += filaHtml("Zona · rechazo · confirmación", (s.zona ? esc(s.zona.nombre) : "—") + " · " + (s.rechazo ? "sí" : "no") + " · " + (s.confirmacion ? "sí" : "no"));
+  html += filaHtml("RSI · cierre en el rango", ind.rsiD.toLocaleString("es-ES", { maximumFractionDigits: 1 }) + " · " + Math.round(s.posCierre * 100) + " %");
+  html += "<div class=\"vacio\">" + esc(imp.texto) + "</div>";
+  if (s.compra) {
+    const umbral = p * (1 - REARME);
+    const zona = s.zona;
+    html += filaHtml("Si compras a " + miles(p) + " €, se rearma", "cierre bajo " + miles(umbral) + " €" + (umbral >= zona.min * (1 - MARGEN_REARME) ? " (dentro de " + esc(zona.nombre) + ")" : " (por debajo de " + esc(zona.nombre) + ": no se rearmaría)"));
+  }
+  el.innerHTML = html;
+}
+
+/* ---------- zonas de las compras y rearme (igual que el widget) ---------- */
+
+const REARME = 0.05;
+const MARGEN_REARME = 0.015;
+const CLAVE_REARME = "btczonas.rearme";
+
+function opcionesZona(idSelect, porDefecto) {
+  const sel = $(idSelect);
+  if (!sel) return;
+  const zonas = datos.niveles.filter((n) => n.tipo === "zona" && isFinite(n.min)).sort((a, b) => b.min - a.min);
+  sel.innerHTML = "<option value=\"\">Ninguna</option>" + zonas.map((z) =>
+    "<option value=\"" + esc(z.id) + "\">" + esc(z.nombre) + " · " + rangoTexto(z) + " € · " + esc((NOMBRE_ESTADO[z.estado] || z.estado).toLowerCase()) + "</option>").join("");
+  sel.value = porDefecto && zonas.some((z) => z.id === porDefecto) ? porDefecto : "";
+}
+
+function zonaPorDefecto() {
+  const ind = indicadores();
+  if (ind) {
+    const s = evaluarSenal(ind);
+    if (s.zona) return s.zona.id;
+  }
+  const activa = datos.niveles.filter((n) => n.tipo === "zona" && n.estado === "activa").sort((a, b) => b.min - a.min)[0];
+  return activa ? activa.id : "";
+}
+
+function marcarComprada(idZona) {
+  const z = datos.niveles.find((n) => n.id === idZona);
+  if (z) z.estado = "comprada";
+}
+
+function compraDeZona(idZona) {
+  return datos.compras
+    .filter((c) => c.zona === idZona && Number(c.precio) > 0)
+    .sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)))[0] || null;
+}
+
+function infoRearme() {
+  return datos.niveles
+    .filter((n) => n.tipo === "zona" && n.estado === "comprada")
+    .map((z) => {
+      const c = compraDeZona(z.id);
+      if (!c) return null;
+      return { zona: z, compra: c, umbral: Number(c.precio) * (1 - REARME), suelo: z.min * (1 - MARGEN_REARME) };
+    })
+    .filter(Boolean);
+}
+
+// Como el widget: una zona comprada vuelve a estar disponible si una vela cierra un 5 % por debajo
+// de lo que pagaste y sigue dentro de la zona. Solo se revisan las velas cerradas desde la última revisión.
+function revisarRearme() {
+  const ahora = Date.now() / 1000;
+  const cerradas = ana.d.filter((x) => x.time + 86400 <= ahora);
+  if (cerradas.length === 0) return;
+  let desde = NaN;
+  try {
+    desde = Number(localStorage.getItem(CLAVE_REARME));
+  } catch (e) {
+    desde = NaN;
+  }
+  const ultima = cerradas[cerradas.length - 1].time;
+  if (!(desde > 0)) {
+    try {
+      localStorage.setItem(CLAVE_REARME, String(ultima));
+    } catch (e) {
+      /* sin almacenamiento */
+    }
+    return;
+  }
+  let cambio = false;
+  for (const r of infoRearme()) {
+    const compraTs = Date.parse(r.compra.fecha + "T00:00:00Z") / 1000;
+    const v = cerradas.find((x) => x.time > desde && x.time >= compraTs && x.close < r.umbral && x.close >= r.suelo);
+    if (v) {
+      r.zona.estado = "activa";
+      r.zona.nota = (r.zona.nota ? r.zona.nota + ". " : "") + "Rearmada el " + fechaBonita(new Date(v.time * 1000).toISOString().slice(0, 10)) + " (cierre " + miles(v.close) + " €)";
+      cambio = true;
+      avisoTemporal(r.zona.nombre + " vuelve a estar disponible (rearme).", "ok");
+    }
+  }
+  try {
+    localStorage.setItem(CLAVE_REARME, String(ultima));
+  } catch (e) {
+    /* sin almacenamiento */
+  }
+  if (cambio && guardar()) refrescarTodo();
+}
+
 /* ---------- calculadora ---------- */
 
 function botonesRapidos(contenedor, opciones, destino) {
@@ -1650,6 +1879,7 @@ function botonesRapidos(contenedor, opciones, destino) {
 }
 
 function prepararCalculadora() {
+  opcionesZona("c-zona", zonaPorDefecto());
   const entrada = $("c-entrada");
   if (!entrada.value && isFinite(mercado.eur)) entrada.value = String(Math.round(mercado.eur));
   const inval = datos.niveles
@@ -1730,7 +1960,10 @@ function registrarDesdeCalculadora() {
     avisoTemporal("Completa el importe y el precio de entrada.", "atento");
     return;
   }
-  const texto = "¿Registrar compra de " + fmtEur(c.importe, 2) + " a " + fmtEur(c.entrada) + " (" + fmtBtc(c.btc) + " BTC) con fecha de hoy?";
+  const idZona = $("c-zona").value;
+  const zona = datos.niveles.find((n) => n.id === idZona);
+  const texto = "¿Registrar compra de " + fmtEur(c.importe, 2) + " a " + fmtEur(c.entrada) + " (" + fmtBtc(c.btc) + " BTC) con fecha de hoy" +
+    (zona ? " en " + zona.nombre + "? La zona quedará como comprada." : ", sin zona?");
   if (!window.confirm(texto)) return;
   datos.compras.push({
     id: nuevoId(),
@@ -1739,8 +1972,10 @@ function registrarDesdeCalculadora() {
     btc: Number(c.btc.toFixed(8)),
     total: c.importe,
     comision: c.comision,
-    nota: ""
+    nota: zona ? zona.nombre : "",
+    zona: idZona
   });
+  if (idZona) marcarComprada(idZona);
   if (guardar()) {
     avisoTemporal("Compra registrada.", "ok");
     refrescarTodo();
@@ -1874,8 +2109,10 @@ function guardarCompra(ev) {
     btc: Number(btc.toFixed(8)),
     total: total,
     comision: comision,
-    nota: $("k-nota").value.trim()
+    nota: $("k-nota").value.trim(),
+    zona: $("k-zona").value
   });
+  if ($("k-zona").value) marcarComprada($("k-zona").value);
   if (guardar()) {
     avisoTemporal("Compra guardada.", "ok");
     $("k-precio").value = "";
@@ -1894,6 +2131,7 @@ function borrarCompra(id) {
 }
 
 function pintarCompras() {
+  opcionesZona("k-zona", $("k-zona") ? $("k-zona").value || zonaPorDefecto() : "");
   const el = $("l-compras");
   if (datos.compras.length === 0) {
     el.innerHTML = "<div class=\"vacio\">Todavía no hay compras.</div>";
@@ -1903,7 +2141,7 @@ function pintarCompras() {
   el.innerHTML = ordenadas.map((c) =>
     "<div class=\"registro\">" +
       "<div class=\"titulo\"><span>" + fechaBonita(c.fecha) + " · " + fmtEur(Number(c.precio)) + "</span><span>" + fmtEur(Number(c.total), 2) + "</span></div>" +
-      "<div class=\"detalle\">" + fmtBtc(Number(c.btc)) + " BTC · comisión " + fmtEur(Number(c.comision) || 0, 2) + (c.nota ? " · " + esc(c.nota) : "") + "</div>" +
+      "<div class=\"detalle\">" + (c.zona && datos.niveles.find((n) => n.id === c.zona) ? esc(datos.niveles.find((n) => n.id === c.zona).nombre) + " · " : "") + fmtBtc(Number(c.btc)) + " BTC · comisión " + fmtEur(Number(c.comision) || 0, 2) + (c.nota ? " · " + esc(c.nota) : "") + "</div>" +
       "<div class=\"acciones\"><button type=\"button\" class=\"peligro\" data-borrar-compra=\"" + esc(c.id) + "\">Borrar</button></div>" +
     "</div>"
   ).join("");
@@ -2100,6 +2338,7 @@ function iniciar() {
 
   $("b-centrar").addEventListener("click", centrarGrafico);
   $("b-copiar").addEventListener("click", copiarParaClaude);
+  $("a-sim").addEventListener("input", pintarSimulacion);
   $("f-evento").addEventListener("submit", guardarEvento);
   $("e-fecha").value = hoyLocal();
   $("a-liquidez").checked = liquidezMarcada();

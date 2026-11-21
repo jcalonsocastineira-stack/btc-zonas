@@ -1,16 +1,52 @@
 {
-  "nota": "Zonas y niveles para los avisos automáticos. Aquí no se guardan compras ni importes personales.",
+  "nota": "Zonas, niveles de rearme y eventos para los avisos automáticos. No se guardan importes, cantidades ni la cartera.",
   "app": "https://jcalonsocastineira-stack.github.io/btc-zonas/",
   "zonas": [
-    { "id": "Z2", "min": 69400, "max": 71000, "estado": "comprada" },
-    { "id": "Z3", "min": 63200, "max": 66700, "estado": "rota" },
-    { "id": "Z4", "min": 58500, "max": 62300, "estado": "rota" },
-    { "id": "Z5", "min": 55500, "max": 57500, "estado": "rota" },
-    { "id": "Z6", "min": 50700, "max": 52500, "estado": "activa" }
+    {
+      "id": "Z2",
+      "min": 69400,
+      "max": 71000,
+      "estado": "comprada",
+      "rearme": {
+        "desde": "2026-10-25",
+        "umbral": 68975
+      }
+    },
+    {
+      "id": "Z3",
+      "min": 63200,
+      "max": 66700,
+      "estado": "rota"
+    },
+    {
+      "id": "Z4",
+      "min": 58500,
+      "max": 62300,
+      "estado": "rota"
+    },
+    {
+      "id": "Z5",
+      "min": 55500,
+      "max": 57500,
+      "estado": "rota"
+    },
+    {
+      "id": "Z6",
+      "min": 50700,
+      "max": 52500,
+      "estado": "activa"
+    }
   ],
-  "resistencia": { "min": 73000, "max": 74600 },
+  "resistencia": {
+    "min": 73000,
+    "max": 74600
+  },
   "pausa": 50650,
   "eventos": [
-    { "fecha": "2026-11-25", "hora": "14:30", "nombre": "PCE de EE. UU." }
+    {
+      "fecha": "2026-11-25",
+      "hora": "14:30",
+      "nombre": "PCE de EE. UU."
+    }
   ]
 }
