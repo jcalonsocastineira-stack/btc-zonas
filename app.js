@@ -706,6 +706,13 @@ function construirSeries() {
   }
 }
 
+function centrarGrafico() {
+  if (!chart || velas.length === 0) return;
+  const barras = intervalo === 1440 ? 90 : 60;
+  chart.priceScale("right").applyOptions({ autoScale: true });
+  chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, velas.length - barras), to: velas.length + 3 });
+}
+
 async function cargarVelas() {
   const estado = $("graf-estado");
   estado.textContent = "Cargando velas de Kraken…";
@@ -1209,6 +1216,8 @@ function iniciar() {
     velas = [];
     cargarVelas();
   }));
+
+  $("b-centrar").addEventListener("click", centrarGrafico);
 
   ["c-importe", "c-comision", "c-entrada", "c-inval", "c-objetivo"].forEach((id) => $(id).addEventListener("input", calcular));
   document.querySelectorAll("[data-importe]").forEach((b) => b.addEventListener("click", () => {

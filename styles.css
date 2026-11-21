@@ -240,6 +240,21 @@ main {
   border: 1px solid var(--borde);
 }
 
+.grafico-caja {
+  position: relative;
+}
+
+.centrar {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 5;
+  min-height: 36px;
+  padding: 0 14px;
+  font-size: 14px;
+  background: rgba(28, 32, 41, 0.92);
+}
+
 .leyenda {
   display: flex;
   flex-wrap: wrap;
