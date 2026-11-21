@@ -553,7 +553,7 @@ function crearGrafico() {
     height: el.clientHeight,
     layout: { background: { type: "solid", color: "#0b0d12" }, textColor: "#8a8f9a", fontSize: 11 },
     grid: { vertLines: { color: "#151821" }, horzLines: { color: "#151821" } },
-    rightPriceScale: { borderVisible: false },
+    rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.06, bottom: 0.22 } },
     timeScale: { borderVisible: false, rightOffset: 3 },
     crosshair: { mode: 0 },
     localization: { locale: "es-ES", priceFormatter: (p) => miles(p) }
@@ -656,7 +656,13 @@ function construirSeries() {
     borderVisible: false,
     wickUpColor: "#1D9E75",
     wickDownColor: "#E24B4A",
-    priceLineColor: "#f7931a"
+    priceLineColor: "#f7931a",
+    autoscaleInfoProvider: (original) => {
+      const r = original();
+      if (!r || !r.priceRange) return r;
+      const margen = (r.priceRange.maxValue - r.priceRange.minValue) * 0.04;
+      return { priceRange: { minValue: r.priceRange.minValue - margen, maxValue: r.priceRange.maxValue + margen } };
+    }
   });
   serieVelas.setData(velas.map((v) => ({ time: v.time, open: v.open, high: v.high, low: v.low, close: v.close })));
   seriesDibujadas.push(serieVelas);
@@ -688,7 +694,7 @@ function construirSeries() {
       else break;
     }
     if (t === null) continue;
-    marcas.push({ time: t, position: "belowBar", color: "#378ADD", shape: "arrowUp", text: "Compra" });
+    marcas.push({ time: t, position: "belowBar", color: "#378ADD", shape: "arrowUp", size: 1.4 });
   }
   marcas.sort((a, b) => a.time - b.time);
   serieVelas.setMarkers(marcas);
