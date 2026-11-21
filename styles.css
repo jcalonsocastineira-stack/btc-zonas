@@ -297,6 +297,12 @@ main {
   background: rgba(55, 138, 221, 0.7);
 }
 
+.cuadro.linea.fib {
+  height: 0;
+  border-top: 2px dashed rgba(232, 170, 70, 0.9);
+  background: none;
+}
+
 .cuadro.linea.liq {
   height: 3px;
   background: rgba(232, 197, 71, 0.85);

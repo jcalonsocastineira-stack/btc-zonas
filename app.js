@@ -718,6 +718,8 @@ function construirSeries() {
 
   lineasLiq = [];
   dibujarLiquidaciones();
+  lineasFib = [];
+  dibujarFib();
 
   if (ajustarVista) {
     const barras = intervalo === 1440 ? 90 : 60;
@@ -1000,6 +1002,96 @@ function alternarLiquidaciones() {
   if (mostrarLiq && liq.niveles.length === 0) calcularLiquidaciones();
 }
 
+/* ---------- Fibonacci de 6 meses (igual que el widget: solo información) ---------- */
+
+const FIB_R = [0.236, 0.382, 0.5, 0.618, 0.786];
+const CLAVE_FIB = "btczonas.fib";
+let mostrarFib = true;
+let lineasFib = [];
+
+try {
+  mostrarFib = localStorage.getItem(CLAVE_FIB) !== "no";
+} catch (e) {
+  mostrarFib = true;
+}
+
+function fibonacci() {
+  const ahora = Date.now() / 1000;
+  const cerradas = ana.d.filter((x) => x.time + 86400 <= ahora).slice(-182);
+  if (cerradas.length < 60) return null;
+  let alto = cerradas[0];
+  let bajo = cerradas[0];
+  for (const x of cerradas) {
+    if (x.high > alto.high) alto = x;
+    if (x.low < bajo.low) bajo = x;
+  }
+  const sube = alto.time > bajo.time;
+  const rango = alto.high - bajo.low;
+  return {
+    sube: sube,
+    alto: alto.high,
+    bajo: bajo.low,
+    niveles: FIB_R.map((r) => ({ r: r, p: sube ? alto.high - r * rango : bajo.low + r * rango }))
+  };
+}
+
+function zonaDeFib(p) {
+  const z = datos.niveles.find((n) => (n.tipo === "zona" || n.tipo === "resistencia") && isFinite(n.min) && p <= techo(n) * 1.01 && p >= n.min * 0.99);
+  return z ? z.nombre + (z.estado === "rota" ? " (rota)" : z.estado === "comprada" ? " (comprada)" : "") : "";
+}
+
+const pctFib = (r) => (r * 100).toLocaleString("es-ES", { maximumFractionDigits: 1 }) + " %";
+
+function pintarFib() {
+  const el = $("a-fib");
+  if (!el) return;
+  const f = fibonacci();
+  if (!f) {
+    el.innerHTML = "<div class=\"vacio\">" + esc(ana.error || "Cargando velas…") + "</div>";
+    return;
+  }
+  el.innerHTML =
+    "<div class=\"vacio\">" + (f.sube ? "Retrocesos de la subida" : "Rebotes de la bajada") + " entre " + fmtEur(f.bajo) + " y " + fmtEur(f.alto) + ".</div>" +
+    f.niveles.map((l) => filaHtml(pctFib(l.r) + (zonaDeFib(l.p) ? " <span class=\"sec\">" + esc(zonaDeFib(l.p)) + "</span>" : ""), fmtEur(l.p) + distanciaA(l.p))).join("");
+}
+
+function dibujarFib() {
+  if (!serieVelas) return;
+  for (const l of lineasFib) {
+    try {
+      serieVelas.removePriceLine(l);
+    } catch (e) {
+      /* la línea ya no existe */
+    }
+  }
+  lineasFib = [];
+  const boton = $("b-fib");
+  if (boton) boton.setAttribute("aria-pressed", mostrarFib ? "true" : "false");
+  if (!mostrarFib) return;
+  const f = fibonacci();
+  if (!f) return;
+  for (const l of f.niveles) {
+    lineasFib.push(serieVelas.createPriceLine({
+      price: l.p,
+      color: "rgba(232,170,70,0.75)",
+      lineWidth: 1,
+      lineStyle: 2,
+      axisLabelVisible: true,
+      title: "Fib " + pctFib(l.r)
+    }));
+  }
+}
+
+function alternarFib() {
+  mostrarFib = !mostrarFib;
+  try {
+    localStorage.setItem(CLAVE_FIB, mostrarFib ? "si" : "no");
+  } catch (e) {
+    /* sin almacenamiento */
+  }
+  dibujarFib();
+}
+
 /* ---------- análisis: indicadores, señal provisional, importe, derivados y calendario ---------- */
 
 const CLAVE_LIQUIDEZ = "btczonas.liquidez";
@@ -1038,6 +1130,7 @@ async function actualizarAnalisis() {
     cargandoAnalisis = false;
   }
   pintarAnalisis();
+  dibujarFib();
 }
 
 function conPrecioVivo(velasOrigen, duracion) {
@@ -1352,6 +1445,7 @@ function pintarAnalisis() {
       filaHtml("Prima de Coinbase", pct(d.primaCoinbase, 3), d.primaCoinbase >= 0 ? "sube" : "baja");
   }
 
+  pintarFib();
   pintarEventos();
 }
 
@@ -1469,6 +1563,8 @@ function textoParaClaude() {
     l.push("RSI diario " + f1(ind.rsiD) + " · RSI semanal " + f1(ind.rsiW) + " · Bollinger diario " + miles(ind.bbInf) + " / " + miles(ind.bbMed) + " / " + miles(ind.bbSup));
     l.push("Medias: 200 d " + miles(ind.ma200d) + distanciaA(ind.ma200d) + " · 20 sem " + miles(ind.ma20w) + distanciaA(ind.ma20w) + " · 200 sem " + miles(ind.ma200w) + distanciaA(ind.ma200w));
     l.push("Retroceso desde máx. 182 d (" + miles(ind.max182) + "): " + f1(ind.retroceso) + " %");
+    const fib = fibonacci();
+    if (fib) l.push("Fibonacci 6 meses (" + (fib.sube ? "retrocesos de la subida " : "rebotes de la bajada ") + miles(fib.bajo) + "–" + miles(fib.alto) + "): " + fib.niveles.map((n) => pctFib(n.r) + " " + miles(n.p) + (zonaDeFib(n.p) ? " (" + zonaDeFib(n.p) + ")" : "")).join(" · "));
     l.push("Señal provisional: zona " + (s.zona ? s.zona.nombre + (s.rota ? " (cerraría rota)" : "") : "ninguna") +
       " · rechazo " + (s.rechazo ? "sí" : "no") + " (banda " + (s.toqueBanda ? "sí" : "no") + ", mecha " + f1((s.mecha / v.close) * 100) + " %, cierre al " + (isFinite(s.posCierre) ? Math.round(s.posCierre * 100) : "—") + " % del rango)" +
       " · confirmación " + (s.confirmacion ? "sí" : "no") +
@@ -2016,6 +2112,7 @@ function iniciar() {
     pintarAnalisis();
   });
   $("b-liq").addEventListener("click", alternarLiquidaciones);
+  $("b-fib").addEventListener("click", alternarFib);
 
   ["c-importe", "c-comision", "c-entrada", "c-inval", "c-objetivo"].forEach((id) => $(id).addEventListener("input", calcular));
   document.querySelectorAll("[data-importe]").forEach((b) => b.addEventListener("click", () => {
