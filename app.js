@@ -1,0 +1,1282 @@
+"use strict";
+
+/* ==========================================================
+   BTC Zonas · app personal (HTML + CSS + JavaScript puro)
+   Fuentes: Kraken (EUR, en directo), Binance (USD y respaldo),
+   CoinGecko (segundo respaldo), Alternative.me (miedo y codicia).
+   Los datos del usuario se guardan solo en este teléfono.
+   ========================================================== */
+
+const CLAVE = "btczonas.v1";
+const CLAVE_VISTA = "btczonas.vista";
+
+const DATOS_SISTEMA = {
+  niveles: [
+    { id: "z2", nombre: "Z2", tipo: "zona", min: 69400, max: 71000, estado: "comprada", nota: "Comprada el 25 oct" },
+    { id: "z3", nombre: "Z3", tipo: "zona", min: 63200, max: 66700, estado: "rota", nota: "Rota el 13 nov" },
+    { id: "z4", nombre: "Z4", tipo: "zona", min: 58500, max: 62300, estado: "rota", nota: "Rota el 14 nov. Se reactiva con 2 cierres seguidos por encima de 59.500 €" },
+    { id: "z5", nombre: "Z5", tipo: "zona", min: 55500, max: 57500, estado: "rota", nota: "Comprada el 16 nov. Rota el 20 nov (cierre 53.688 €)" },
+    { id: "z6", nombre: "Z6", tipo: "zona", min: 50700, max: 52500, estado: "activa", nota: "Doble suelo mensual, Fibonacci 100 % en 50.822 €, banda inferior semanal en unos 49.430 €" },
+    { id: "res", nombre: "Resistencia", tipo: "resistencia", min: 73000, max: 74600, estado: "activa", nota: "" },
+    { id: "pausa", nombre: "Pausa", tipo: "pausa", min: 50650, max: null, estado: "activa", nota: "El widget se pausa si una vela cierra por debajo" }
+  ],
+  compras: [
+    { id: "c1", fecha: "2026-10-10", precio: 74139.97, btc: 0.000674, total: 50.97, comision: 1, nota: "Antes del sistema" },
+    { id: "c2", fecha: "2026-10-25", precio: 72605.57, btc: 0.000275, total: 20.97, comision: 1, nota: "Z2" },
+    { id: "c3", fecha: "2026-10-31", precio: 69721.29, btc: 0.000286, total: 20.94, comision: 1, nota: "Z3" },
+    { id: "c4", fecha: "2026-11-16", precio: 59213.25, btc: 0.000675, total: 40.97, comision: 1, nota: "Z5 señal fuerte" }
+  ],
+  notas: []
+};
+
+const TITULOS = { panel: "Panel", grafico: "Gráfico", calc: "Calculadora", bitacora: "Bitácora" };
+const FG_ES = {
+  "Extreme Fear": "Miedo extremo",
+  "Fear": "Miedo",
+  "Neutral": "Neutral",
+  "Greed": "Codicia",
+  "Extreme Greed": "Codicia extrema"
+};
+const NOMBRE_TIPO = { zona: "Zona de compra", resistencia: "Resistencia", soporte: "Soporte", pausa: "Pausa", otro: "Otro" };
+const NOMBRE_ESTADO = { activa: "Activa", comprada: "Comprada", rota: "Rota" };
+
+/* ---------- utilidades ---------- */
+
+const $ = (id) => document.getElementById(id);
+
+function esc(s) {
+  return String(s === undefined || s === null ? "" : s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"
+  }[c]));
+}
+
+function miles(n) {
+  return isFinite(n) ? Math.round(n).toLocaleString("es-ES") : "—";
+}
+
+function fmtEur(n, dec) {
+  const d = dec || 0;
+  if (!isFinite(n)) return "—";
+  return n.toLocaleString("es-ES", { minimumFractionDigits: d, maximumFractionDigits: d }) + " €";
+}
+
+function fmtPct(n, dec) {
+  const d = dec === undefined ? 1 : dec;
+  if (!isFinite(n)) return "—";
+  return (n > 0 ? "+" : "") + n.toLocaleString("es-ES", { minimumFractionDigits: d, maximumFractionDigits: d }) + " %";
+}
+
+function fmtBtc(n) {
+  if (!isFinite(n)) return "—";
+  return n.toLocaleString("es-ES", { minimumFractionDigits: 6, maximumFractionDigits: 8 });
+}
+
+// Admite "53.688", "53688", "53.688,5", "0,000674" y "0.000674"
+function num(texto) {
+  if (texto === undefined || texto === null) return NaN;
+  let t = String(texto).trim().replace(/\s/g, "").replace(/€|\$/g, "");
+  if (t === "") return NaN;
+  if (t.indexOf(",") >= 0) {
+    t = t.replace(/\./g, "").replace(",", ".");
+  } else {
+    const partes = t.split(".");
+    if (partes.length > 2) {
+      t = partes.join("");
+    } else if (partes.length === 2 && partes[1].length === 3 && partes[0] !== "0" && partes[0] !== "") {
+      t = partes.join("");
+    }
+  }
+  const v = Number(t);
+  return isFinite(v) ? v : NaN;
+}
+
+function rangoTexto(n) {
+  const tieneRango = isFinite(n.max) && n.max > n.min;
+  return tieneRango ? miles(n.min) + "–" + miles(n.max) : miles(n.min);
+}
+
+function techo(n) {
+  return isFinite(n.max) && n.max > n.min ? n.max : n.min;
+}
+
+function nuevoId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+
+function hoyLocal() {
+  const d = new Date();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dia = String(d.getDate()).padStart(2, "0");
+  return d.getFullYear() + "-" + m + "-" + dia;
+}
+
+function fechaBonita(iso) {
+  const p = String(iso || "").split("-");
+  if (p.length !== 3) return esc(iso);
+  const meses = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sept", "oct", "nov", "dic"];
+  return Number(p[2]) + " " + meses[Number(p[1]) - 1] + " " + p[0];
+}
+
+async function getJSON(url, ms) {
+  const control = new AbortController();
+  const temporizador = setTimeout(() => control.abort(), ms || 8000);
+  try {
+    const r = await fetch(url, { signal: control.signal, cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return await r.json();
+  } finally {
+    clearTimeout(temporizador);
+  }
+}
+
+/* ---------- almacenamiento ---------- */
+
+function copiaSistema() {
+  return JSON.parse(JSON.stringify(DATOS_SISTEMA));
+}
+
+function normalizar(d) {
+  return {
+    niveles: Array.isArray(d && d.niveles) ? d.niveles : [],
+    compras: Array.isArray(d && d.compras) ? d.compras : [],
+    notas: Array.isArray(d && d.notas) ? d.notas : []
+  };
+}
+
+function cargarDatos() {
+  try {
+    const t = localStorage.getItem(CLAVE);
+    if (t) return normalizar(JSON.parse(t));
+  } catch (e) {
+    /* sin acceso a localStorage: se usan los datos del sistema */
+  }
+  return copiaSistema();
+}
+
+let datos = cargarDatos();
+
+function guardar() {
+  try {
+    localStorage.setItem(CLAVE, JSON.stringify(datos));
+    return true;
+  } catch (e) {
+    avisoTemporal("No se pudo guardar en el teléfono.", "malo");
+    return false;
+  }
+}
+
+/* ---------- estado del mercado ---------- */
+
+const mercado = {
+  eur: NaN,
+  usd: NaN,
+  cambio24: NaN,
+  maxEur: NaN,
+  minEur: NaN,
+  abiertoHoy: NaN,
+  fuente: "",
+  directo: false,
+  actualizado: null
+};
+
+async function precioKraken() {
+  const j = await getJSON("https://api.kraken.com/0/public/Ticker?pair=XBTEUR");
+  if (j.error && j.error.length) throw new Error(j.error.join(", "));
+  const clave = Object.keys(j.result)[0];
+  const t = j.result[clave];
+  return { eur: Number(t.c[0]), maxEur: Number(t.h[1]), minEur: Number(t.l[1]), abiertoHoy: Number(t.o) };
+}
+
+async function precioBinance(simbolo) {
+  const j = await getJSON("https://api.binance.com/api/v3/ticker/24hr?symbol=" + simbolo);
+  return {
+    precio: Number(j.lastPrice),
+    max: Number(j.highPrice),
+    min: Number(j.lowPrice),
+    abierto: Number(j.openPrice),
+    cambio: Number(j.priceChangePercent)
+  };
+}
+
+async function precioCoinGecko() {
+  const j = await getJSON("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd,eur&include_24hr_change=true");
+  const b = j.bitcoin;
+  return { eur: Number(b.eur), usd: Number(b.usd), cambio: Number(b.eur_24h_change) };
+}
+
+let pidiendoPrecios = false;
+
+async function actualizarPrecios() {
+  if (pidiendoPrecios) return;
+  pidiendoPrecios = true;
+  try {
+    const res = await Promise.allSettled([precioKraken(), precioBinance("BTCEUR"), precioBinance("BTCUSDT")]);
+    const k = res[0];
+    const be = res[1];
+    const bu = res[2];
+    let fuente = "";
+
+    if (k.status === "fulfilled") {
+      if (!mercado.directo) mercado.eur = k.value.eur;
+      mercado.maxEur = k.value.maxEur;
+      mercado.minEur = k.value.minEur;
+      mercado.abiertoHoy = k.value.abiertoHoy;
+      fuente = "Kraken";
+    } else if (be.status === "fulfilled") {
+      mercado.eur = be.value.precio;
+      mercado.maxEur = be.value.max;
+      mercado.minEur = be.value.min;
+      fuente = "Binance (respaldo)";
+    }
+    if (be.status === "fulfilled") mercado.cambio24 = be.value.cambio;
+    if (bu.status === "fulfilled") mercado.usd = bu.value.precio;
+
+    if (!fuente || bu.status !== "fulfilled" || be.status !== "fulfilled") {
+      try {
+        const g = await precioCoinGecko();
+        if (!fuente) {
+          mercado.eur = g.eur;
+          fuente = "CoinGecko (respaldo)";
+        }
+        if (bu.status !== "fulfilled") mercado.usd = g.usd;
+        if (be.status !== "fulfilled") mercado.cambio24 = g.cambio;
+      } catch (e) {
+        /* sin segundo respaldo */
+      }
+    }
+
+    if (!fuente && !mercado.directo) {
+      mercado.fuente = "";
+      pintarEstado();
+      return;
+    }
+    if (!mercado.directo) mercado.fuente = fuente;
+    mercado.actualizado = new Date();
+    pedirRepintado();
+  } finally {
+    pidiendoPrecios = false;
+  }
+}
+
+/* ---------- precio en directo (WebSocket de Kraken) ---------- */
+
+let ws = null;
+let wsReintento = null;
+
+function conectarDirecto() {
+  if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
+  try {
+    ws = new WebSocket("wss://ws.kraken.com/v2");
+  } catch (e) {
+    ws = null;
+    return;
+  }
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ method: "subscribe", params: { channel: "ticker", symbol: ["BTC/EUR"] } }));
+  };
+  ws.onmessage = (ev) => {
+    let m;
+    try {
+      m = JSON.parse(ev.data);
+    } catch (e) {
+      return;
+    }
+    if (m.channel !== "ticker" || !Array.isArray(m.data) || !m.data[0]) return;
+    const t = m.data[0];
+    const ultimo = Number(t.last);
+    if (!isFinite(ultimo)) return;
+    mercado.eur = ultimo;
+    if (isFinite(Number(t.high))) mercado.maxEur = Number(t.high);
+    if (isFinite(Number(t.low))) mercado.minEur = Number(t.low);
+    mercado.directo = true;
+    mercado.fuente = "Kraken";
+    mercado.actualizado = new Date();
+    actualizarVelaEnVivo(ultimo);
+    pedirRepintado();
+  };
+  ws.onclose = () => {
+    ws = null;
+    mercado.directo = false;
+    pintarEstado();
+    clearTimeout(wsReintento);
+    if (document.visibilityState === "visible") wsReintento = setTimeout(conectarDirecto, 5000);
+  };
+  ws.onerror = () => {
+    try {
+      ws.close();
+    } catch (e) {
+      /* ya cerrado */
+    }
+  };
+}
+
+function desconectarDirecto() {
+  clearTimeout(wsReintento);
+  if (ws) {
+    ws.onclose = null;
+    try {
+      ws.close();
+    } catch (e) {
+      /* ya cerrado */
+    }
+    ws = null;
+  }
+  mercado.directo = false;
+}
+
+let repintadoPendiente = false;
+
+function pedirRepintado() {
+  if (repintadoPendiente) return;
+  repintadoPendiente = true;
+  requestAnimationFrame(() => {
+    repintadoPendiente = false;
+    pintarPanel();
+    revisarAvisos();
+    if ($("v-calc").classList.contains("activa")) {
+      if (!$("c-entrada").value && isFinite(mercado.eur)) $("c-entrada").value = String(Math.round(mercado.eur));
+      calcular();
+    }
+  });
+}
+
+/* ---------- panel ---------- */
+
+function pintarEstado() {
+  const punto = $("punto");
+  punto.className = "punto";
+  if (mercado.directo) {
+    punto.classList.add("directo");
+    $("fuente").textContent = "Kraken · en directo";
+  } else if (mercado.fuente) {
+    punto.classList.add("lento");
+    $("fuente").textContent = mercado.fuente + " · cada minuto";
+  } else {
+    punto.classList.add("malo");
+    $("fuente").textContent = "Sin conexión";
+  }
+}
+
+function pintarCambio(el, valor, texto) {
+  el.textContent = isFinite(valor) ? fmtPct(valor) + " " + texto : "— " + texto;
+  el.className = isFinite(valor) ? (valor >= 0 ? "sube" : "baja") : "";
+}
+
+function pintarPanel() {
+  $("p-eur").textContent = fmtEur(mercado.eur);
+  $("p-usd").textContent = isFinite(mercado.usd) ? miles(mercado.usd) + " $" : "— $";
+  pintarCambio($("p-24h"), mercado.cambio24, "en 24 h");
+  const hoy = isFinite(mercado.abiertoHoy) && isFinite(mercado.eur) ? (mercado.eur / mercado.abiertoHoy - 1) * 100 : NaN;
+  pintarCambio($("p-hoy"), hoy, "vela de hoy");
+  $("p-max").textContent = fmtEur(mercado.maxEur);
+  $("p-min").textContent = fmtEur(mercado.minEur);
+  $("p-act").textContent = mercado.actualizado
+    ? mercado.actualizado.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+    : "—";
+  pintarEstado();
+  pintarCercanos();
+  pintarCartera();
+}
+
+function pintarCuentaAtras() {
+  const ahora = Date.now();
+  const dia = 86400000;
+  const proximo = Math.floor(ahora / dia) * dia + dia;
+  const s = Math.max(0, Math.floor((proximo - ahora) / 1000));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  $("p-cierre").textContent = h + " h " + String(m).padStart(2, "0") + " min";
+}
+
+function nivelesVigentes() {
+  return datos.niveles.filter((n) => n.estado !== "rota" && isFinite(n.min));
+}
+
+function pintarCercanos() {
+  const el = $("cercanos");
+  const p = mercado.eur;
+  if (!isFinite(p)) {
+    el.innerHTML = "<div class=\"vacio\">Esperando el precio…</div>";
+    return;
+  }
+  const lista = nivelesVigentes().map((n) => {
+    const bajo = n.min;
+    const alto = techo(n);
+    const dentro = p >= bajo && p <= alto;
+    const ref = dentro ? p : (p > alto ? alto : bajo);
+    return { n: n, ref: ref, dentro: dentro, dist: (ref / p - 1) * 100 };
+  });
+  const encima = lista.filter((a) => !a.dentro && a.ref > p).sort((a, b) => a.ref - b.ref).slice(0, 2).reverse();
+  const dentro = lista.filter((a) => a.dentro);
+  const debajo = lista.filter((a) => !a.dentro && a.ref < p).sort((a, b) => b.ref - a.ref).slice(0, 2);
+  const filas = encima.concat(dentro, debajo);
+  if (filas.length === 0) {
+    el.innerHTML = "<div class=\"vacio\">Añade niveles en la Bitácora.</div>";
+    return;
+  }
+  el.innerHTML = filas.map((a) => {
+    const derecha = a.dentro
+      ? "<span class=\"sube\">Dentro</span>"
+      : "<span class=\"" + (a.dist < 0 ? "baja" : "sube") + "\">" + fmtPct(a.dist) + "</span>";
+    return "<div class=\"item\"><span>" + esc(a.n.nombre) + " <span class=\"sec\">" + rangoTexto(a.n) + " €</span></span>" + derecha + "</div>";
+  }).join("");
+}
+
+function resumenCartera() {
+  let btc = 0;
+  let total = 0;
+  let base = 0;
+  for (const c of datos.compras) {
+    const b = Number(c.btc) || 0;
+    btc += b;
+    total += Number(c.total) || 0;
+    base += b * (Number(c.precio) || 0);
+  }
+  return { btc: btc, total: total, base: base, medio: btc > 0 ? base / btc : NaN };
+}
+
+function pintarCartera() {
+  const el = $("cartera");
+  const r = resumenCartera();
+  if (r.btc <= 0) {
+    el.innerHTML = "<div class=\"vacio\">Sin compras registradas.</div>";
+    return;
+  }
+  const valor = isFinite(mercado.eur) ? r.btc * mercado.eur : NaN;
+  const resultado = valor - r.total;
+  const pct = r.total > 0 ? (resultado / r.total) * 100 : NaN;
+  const clase = isFinite(resultado) ? (resultado >= 0 ? "sube" : "baja") : "";
+  el.innerHTML =
+    "<div class=\"item\"><span>BTC</span><span>" + fmtBtc(r.btc) + "</span></div>" +
+    "<div class=\"item\"><span>Invertido <span class=\"sec\">con comisiones</span></span><span>" + fmtEur(r.total, 2) + "</span></div>" +
+    "<div class=\"item\"><span>Precio medio <span class=\"sec\">sin comisiones</span></span><span>" + fmtEur(r.medio) + "</span></div>" +
+    "<div class=\"item\"><span>Valor actual</span><span>" + fmtEur(valor, 2) + "</span></div>" +
+    "<div class=\"item\"><span>Resultado</span><span class=\"" + clase + "\">" + fmtEur(resultado, 2) + " (" + fmtPct(pct) + ")</span></div>";
+}
+
+/* ---------- avisos dentro de la app ---------- */
+
+let avisoFijo = { texto: "", clase: "" };
+let avisoTemporalHasta = 0;
+
+function mostrarAviso(texto, clase) {
+  const el = $("aviso");
+  if (!texto) {
+    el.className = "aviso oculto";
+    el.textContent = "";
+    return;
+  }
+  el.className = "aviso " + clase;
+  el.textContent = texto;
+}
+
+function avisoTemporal(texto, clase) {
+  avisoTemporalHasta = Date.now() + 3500;
+  mostrarAviso(texto, clase);
+  setTimeout(() => {
+    if (Date.now() >= avisoTemporalHasta) mostrarAviso(avisoFijo.texto, avisoFijo.clase);
+  }, 3600);
+}
+
+function revisarAvisos() {
+  const p = mercado.eur;
+  let texto = "";
+  let clase = "";
+  if (isFinite(p)) {
+    const zonas = datos.niveles.filter((n) => n.tipo === "zona" && n.estado === "activa" && isFinite(n.min));
+    const pausas = datos.niveles.filter((n) => n.tipo === "pausa" && n.estado !== "rota" && isFinite(n.min));
+    const bajoPausa = pausas.find((n) => p < n.min);
+    const zonaDentro = zonas.find((z) => p >= z.min && p <= techo(z));
+    const cercaPausa = pausas.find((n) => p >= n.min && p <= n.min * 1.02);
+    const zonaCerca = zonas.find((z) => p > techo(z) && p <= techo(z) * 1.01);
+
+    if (bajoPausa) {
+      texto = "Por debajo del nivel de pausa (" + miles(bajoPausa.min) + " €). Si la vela cierra así, el widget se pausa.";
+      clase = "malo";
+    } else if (zonaDentro) {
+      texto = "Precio dentro de " + zonaDentro.nombre + " (" + rangoTexto(zonaDentro) + " €). Espera al cierre de la vela y mira el widget.";
+      clase = "info";
+    } else if (cercaPausa) {
+      texto = "A " + fmtPct((p / cercaPausa.min - 1) * 100) + " del nivel de pausa (" + miles(cercaPausa.min) + " €).";
+      clase = "atento";
+    } else if (zonaCerca) {
+      texto = "A " + fmtPct((p / techo(zonaCerca) - 1) * 100) + " de " + zonaCerca.nombre + " (" + rangoTexto(zonaCerca) + " €).";
+      clase = "atento";
+    }
+  }
+  avisoFijo = { texto: texto, clase: clase };
+  if (Date.now() >= avisoTemporalHasta) mostrarAviso(texto, clase);
+}
+
+/* ---------- miedo y codicia ---------- */
+
+function colorMiedo(v) {
+  if (v < 25) return "#f0605d";
+  if (v < 45) return "#ef9f27";
+  if (v < 55) return "#8a8f9a";
+  if (v < 75) return "#97c459";
+  return "#3ecf8e";
+}
+
+async function actualizarMiedo() {
+  try {
+    const j = await getJSON("https://api.alternative.me/fng/?limit=8");
+    const d = j.data;
+    const v = Number(d[0].value);
+    const el = $("fg-val");
+    el.textContent = v + " · " + (FG_ES[d[0].value_classification] || d[0].value_classification);
+    el.style.color = colorMiedo(v);
+    $("fg-barra").style.width = Math.max(2, Math.min(100, v)) + "%";
+    $("fg-barra").style.background = colorMiedo(v);
+    $("fg-ayer").textContent = d[1] ? d[1].value : "—";
+    $("fg-semana").textContent = d[7] ? d[7].value : "—";
+  } catch (e) {
+    $("fg-val").textContent = "Sin datos";
+  }
+}
+
+/* ---------- gráfico ---------- */
+
+let chart = null;
+let serieVelas = null;
+let seriesDibujadas = [];
+let velas = [];
+let intervalo = 1440;
+let ajustarVista = true;
+
+function crearGrafico() {
+  if (chart) return true;
+  if (!window.LightweightCharts) return false;
+  const el = $("grafico");
+  chart = LightweightCharts.createChart(el, {
+    width: el.clientWidth,
+    height: el.clientHeight,
+    layout: { background: { type: "solid", color: "#0b0d12" }, textColor: "#8a8f9a", fontSize: 11 },
+    grid: { vertLines: { color: "#151821" }, horzLines: { color: "#151821" } },
+    rightPriceScale: { borderVisible: false },
+    timeScale: { borderVisible: false, rightOffset: 3 },
+    crosshair: { mode: 0 },
+    localization: { locale: "es-ES", priceFormatter: (p) => miles(p) }
+  });
+  if (window.ResizeObserver) {
+    new ResizeObserver(() => {
+      if (el.clientWidth > 0 && el.clientHeight > 0) chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
+    }).observe(el);
+  }
+  return true;
+}
+
+function colorNivel(n) {
+  if (n.estado === "rota") return { linea: "#888780", relleno: "rgba(136,135,128,0.12)", estilo: 2 };
+  if (n.tipo === "resistencia") return { linea: "#E24B4A", relleno: "rgba(226,75,74,0.16)", estilo: 0 };
+  if (n.tipo === "pausa") return { linea: "#EF9F27", relleno: "rgba(239,159,39,0.14)", estilo: 1 };
+  if (n.tipo === "zona" && n.estado === "comprada") return { linea: "#378ADD", relleno: "rgba(55,138,221,0.14)", estilo: 0 };
+  if (n.tipo === "zona" || n.tipo === "soporte") return { linea: "#1D9E75", relleno: "rgba(29,158,117,0.22)", estilo: 0 };
+  return { linea: "#8a8f9a", relleno: "rgba(138,143,154,0.12)", estilo: 2 };
+}
+
+function bollinger(v, n, k) {
+  const arriba = [];
+  const media = [];
+  const abajo = [];
+  for (let i = n - 1; i < v.length; i++) {
+    let suma = 0;
+    for (let j = i - n + 1; j <= i; j++) suma += v[j].close;
+    const m = suma / n;
+    let q = 0;
+    for (let j = i - n + 1; j <= i; j++) q += (v[j].close - m) * (v[j].close - m);
+    const sd = Math.sqrt(q / n);
+    const t = v[i].time;
+    arriba.push({ time: t, value: m + k * sd });
+    media.push({ time: t, value: m });
+    abajo.push({ time: t, value: m - k * sd });
+  }
+  return [arriba, media, abajo];
+}
+
+function construirSeries() {
+  if (!crearGrafico() || velas.length === 0) return;
+  for (const s of seriesDibujadas) chart.removeSeries(s);
+  seriesDibujadas = [];
+  const tiempos = velas.map((v) => v.time);
+
+  for (const n of datos.niveles) {
+    if (!isFinite(n.min)) continue;
+    if (!(isFinite(n.max) && n.max > n.min)) continue;
+    const c = colorNivel(n);
+    const s = chart.addBaselineSeries({
+      baseValue: { type: "price", price: n.min },
+      topFillColor1: c.relleno,
+      topFillColor2: c.relleno,
+      topLineColor: "rgba(0,0,0,0)",
+      bottomFillColor1: "rgba(0,0,0,0)",
+      bottomFillColor2: "rgba(0,0,0,0)",
+      bottomLineColor: "rgba(0,0,0,0)",
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+      autoscaleInfoProvider: () => null
+    });
+    s.setData(tiempos.map((t) => ({ time: t, value: n.max })));
+    seriesDibujadas.push(s);
+  }
+
+  const vol = chart.addHistogramSeries({
+    priceScaleId: "vol",
+    priceFormat: { type: "volume" },
+    lastValueVisible: false,
+    priceLineVisible: false
+  });
+  chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+  vol.setData(velas.map((v) => ({
+    time: v.time,
+    value: v.vol,
+    color: v.close >= v.open ? "rgba(29,158,117,0.35)" : "rgba(226,75,74,0.35)"
+  })));
+  seriesDibujadas.push(vol);
+
+  const bandas = bollinger(velas, 20, 2);
+  bandas.forEach((datosBanda, i) => {
+    const s = chart.addLineSeries({
+      color: i === 1 ? "rgba(55,138,221,0.55)" : "rgba(55,138,221,0.35)",
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+      autoscaleInfoProvider: () => null
+    });
+    s.setData(datosBanda);
+    seriesDibujadas.push(s);
+  });
+
+  serieVelas = chart.addCandlestickSeries({
+    upColor: "#1D9E75",
+    downColor: "#E24B4A",
+    borderVisible: false,
+    wickUpColor: "#1D9E75",
+    wickDownColor: "#E24B4A",
+    priceLineColor: "#f7931a"
+  });
+  serieVelas.setData(velas.map((v) => ({ time: v.time, open: v.open, high: v.high, low: v.low, close: v.close })));
+  seriesDibujadas.push(serieVelas);
+
+  for (const n of datos.niveles) {
+    if (!isFinite(n.min)) continue;
+    const c = colorNivel(n);
+    const tieneRango = isFinite(n.max) && n.max > n.min;
+    serieVelas.createPriceLine({
+      price: tieneRango ? n.max : n.min,
+      color: c.linea,
+      lineWidth: 1,
+      lineStyle: c.estilo,
+      axisLabelVisible: true,
+      title: n.nombre + (n.estado === "rota" ? " (rota)" : "")
+    });
+    if (tieneRango) {
+      serieVelas.createPriceLine({ price: n.min, color: c.linea, lineWidth: 1, lineStyle: c.estilo, axisLabelVisible: false, title: "" });
+    }
+  }
+
+  const marcas = [];
+  for (const c of datos.compras) {
+    const ts = Date.parse(c.fecha + "T00:00:00Z") / 1000;
+    if (!isFinite(ts)) continue;
+    let t = null;
+    for (const x of tiempos) {
+      if (x <= ts) t = x;
+      else break;
+    }
+    if (t === null) continue;
+    marcas.push({ time: t, position: "belowBar", color: "#378ADD", shape: "arrowUp", text: "Compra" });
+  }
+  marcas.sort((a, b) => a.time - b.time);
+  serieVelas.setMarkers(marcas);
+
+  if (ajustarVista) {
+    const barras = intervalo === 1440 ? 90 : 60;
+    chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, velas.length - barras), to: velas.length + 3 });
+    ajustarVista = false;
+  }
+}
+
+async function cargarVelas() {
+  const estado = $("graf-estado");
+  estado.textContent = "Cargando velas de Kraken…";
+  try {
+    const j = await getJSON("https://api.kraken.com/0/public/OHLC?pair=XBTEUR&interval=" + intervalo, 12000);
+    if (j.error && j.error.length) throw new Error(j.error.join(", "));
+    const clave = Object.keys(j.result).find((x) => x !== "last");
+    velas = j.result[clave].map((r) => ({
+      time: Number(r[0]),
+      open: Number(r[1]),
+      high: Number(r[2]),
+      low: Number(r[3]),
+      close: Number(r[4]),
+      vol: Number(r[6])
+    }));
+    ajustarVista = true;
+    construirSeries();
+    estado.textContent = "Kraken BTCEUR · " + velas.length + " velas " + (intervalo === 1440 ? "diarias" : "semanales") +
+      ". La última vela se mueve en directo con el precio.";
+  } catch (e) {
+    estado.textContent = "No se pudieron cargar las velas. Toca Diario o Semanal para reintentar.";
+  }
+}
+
+function actualizarVelaEnVivo(p) {
+  if (!serieVelas || velas.length === 0) return;
+  const duracion = intervalo * 60;
+  const u = velas[velas.length - 1];
+  const ahora = Math.floor(Date.now() / 1000);
+  if (ahora >= u.time + duracion) {
+    if (intervalo !== 1440) return;
+    const nueva = { time: u.time + duracion, open: p, high: p, low: p, close: p, vol: 0 };
+    velas.push(nueva);
+    serieVelas.update({ time: nueva.time, open: p, high: p, low: p, close: p });
+    return;
+  }
+  u.close = p;
+  if (p > u.high) u.high = p;
+  if (p < u.low) u.low = p;
+  serieVelas.update({ time: u.time, open: u.open, high: u.high, low: u.low, close: u.close });
+}
+
+function abrirGrafico() {
+  if (!crearGrafico()) {
+    $("graf-estado").textContent = "No se pudo cargar la librería del gráfico. Comprueba la conexión y vuelve a abrir la app.";
+    return;
+  }
+  const el = $("grafico");
+  chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
+  if (velas.length === 0) cargarVelas();
+}
+
+/* ---------- calculadora ---------- */
+
+function botonesRapidos(contenedor, opciones, destino) {
+  const el = $(contenedor);
+  el.innerHTML = "";
+  for (const o of opciones) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = o.texto;
+    b.addEventListener("click", () => {
+      $(destino).value = String(Math.round(o.valor));
+      calcular();
+    });
+    el.appendChild(b);
+  }
+}
+
+function prepararCalculadora() {
+  const entrada = $("c-entrada");
+  if (!entrada.value && isFinite(mercado.eur)) entrada.value = String(Math.round(mercado.eur));
+  const inval = datos.niveles
+    .filter((n) => isFinite(n.min) && n.estado === "activa" && (n.tipo === "zona" || n.tipo === "pausa" || n.tipo === "soporte"))
+    .sort((a, b) => b.min - a.min)
+    .map((n) => ({ texto: n.nombre + " " + miles(n.min), valor: n.min }));
+  botonesRapidos("c-inval-rapidos", inval, "c-inval");
+  const r = resumenCartera();
+  const objetivos = datos.niveles
+    .filter((n) => isFinite(n.min) && n.tipo === "resistencia" && n.estado !== "rota")
+    .sort((a, b) => a.min - b.min)
+    .map((n) => ({ texto: n.nombre + " " + miles(n.min), valor: n.min }));
+  if (isFinite(r.medio)) objetivos.push({ texto: "Tu precio medio " + miles(r.medio), valor: r.medio });
+  botonesRapidos("c-obj-rapidos", objetivos, "c-objetivo");
+  calcular();
+}
+
+function calcular() {
+  const out = $("c-resultado");
+  const importe = num($("c-importe").value);
+  const comision = num($("c-comision").value) || 0;
+  const entrada = num($("c-entrada").value);
+  const inval = num($("c-inval").value);
+  const objetivo = num($("c-objetivo").value);
+
+  if (!(importe > 0) || !(entrada > 0)) {
+    out.innerHTML = "<div class=\"vacio\">Pon el importe y el precio de entrada.</div>";
+    return null;
+  }
+  if (comision < 0 || comision >= importe) {
+    out.innerHTML = "<div class=\"vacio baja\">La comisión tiene que ser menor que el importe.</div>";
+    return null;
+  }
+
+  const btc = (importe - comision) / entrada;
+  const costeReal = importe / btc;
+  let html =
+    "<div class=\"lista-simple\">" +
+    "<div class=\"item\"><span>BTC que recibes</span><span>" + fmtBtc(btc) + "</span></div>" +
+    "<div class=\"item\"><span>Coste real por BTC <span class=\"sec\">con comisión</span></span><span>" + fmtEur(costeReal) + "</span></div>";
+
+  let perdida = NaN;
+  let ganancia = NaN;
+  if (isFinite(inval)) {
+    if (inval >= entrada) {
+      html += "<div class=\"item\"><span>Invalidación</span><span class=\"baja\">Debe estar por debajo de la entrada</span></div>";
+    } else {
+      perdida = importe - btc * inval;
+      html += "<div class=\"item\"><span>Si llega a la invalidación</span><span class=\"baja\">−" + fmtEur(perdida, 2) + " (" + fmtPct(-(perdida / importe) * 100) + ")</span></div>";
+    }
+  }
+  if (isFinite(objetivo)) {
+    if (objetivo <= entrada) {
+      html += "<div class=\"item\"><span>Objetivo</span><span class=\"baja\">Debe estar por encima de la entrada</span></div>";
+    } else {
+      ganancia = btc * objetivo - importe;
+      html += "<div class=\"item\"><span>Si llega al objetivo</span><span class=\"" + (ganancia >= 0 ? "sube" : "baja") + "\">" + (ganancia >= 0 ? "+" : "") + fmtEur(ganancia, 2) + " (" + fmtPct((ganancia / importe) * 100) + ")</span></div>";
+    }
+  }
+  if (isFinite(perdida) && isFinite(ganancia) && perdida > 0) {
+    const ratio = ganancia / perdida;
+    html += "<div class=\"item\"><span>Riesgo : beneficio</span><span class=\"" + (ratio >= 2 ? "sube" : (ratio >= 1 ? "" : "baja")) + "\">1 : " + ratio.toLocaleString("es-ES", { maximumFractionDigits: 1 }) + "</span></div>";
+  }
+
+  const r = resumenCartera();
+  const btcTotal = r.btc + btc;
+  const medioNuevo = (r.base + btc * entrada) / btcTotal;
+  html += "<div class=\"item\"><span>Tu precio medio <span class=\"sec\">ahora → tras comprar</span></span><span>" +
+    (isFinite(r.medio) ? miles(r.medio) + " → " : "") + fmtEur(medioNuevo) + "</span></div>";
+  html += "</div>";
+  out.innerHTML = html;
+  return { importe: importe, comision: comision, entrada: entrada, btc: btc };
+}
+
+function registrarDesdeCalculadora() {
+  const c = calcular();
+  if (!c) {
+    avisoTemporal("Completa el importe y el precio de entrada.", "atento");
+    return;
+  }
+  const texto = "¿Registrar compra de " + fmtEur(c.importe, 2) + " a " + fmtEur(c.entrada) + " (" + fmtBtc(c.btc) + " BTC) con fecha de hoy?";
+  if (!window.confirm(texto)) return;
+  datos.compras.push({
+    id: nuevoId(),
+    fecha: hoyLocal(),
+    precio: c.entrada,
+    btc: Number(c.btc.toFixed(8)),
+    total: c.importe,
+    comision: c.comision,
+    nota: ""
+  });
+  if (guardar()) {
+    avisoTemporal("Compra registrada.", "ok");
+    refrescarTodo();
+  }
+}
+
+/* ---------- bitácora: niveles ---------- */
+
+function limpiarFormNivel() {
+  $("n-id").value = "";
+  $("n-nombre").value = "";
+  $("n-tipo").value = "zona";
+  $("n-min").value = "";
+  $("n-max").value = "";
+  $("n-estado").value = "activa";
+  $("n-nota").value = "";
+  $("n-error").textContent = "";
+  $("n-guardar").textContent = "Guardar nivel";
+}
+
+function guardarNivel(ev) {
+  ev.preventDefault();
+  const nombre = $("n-nombre").value.trim();
+  const min = num($("n-min").value);
+  const maxTexto = $("n-max").value.trim();
+  const max = maxTexto === "" ? null : num(maxTexto);
+  const error = $("n-error");
+  if (!nombre) {
+    error.textContent = "Pon un nombre.";
+    return;
+  }
+  if (!(min > 0)) {
+    error.textContent = "Pon un precio mínimo válido.";
+    return;
+  }
+  if (max !== null && !(max > min)) {
+    error.textContent = "El precio máximo tiene que ser mayor que el mínimo (o déjalo vacío).";
+    return;
+  }
+  error.textContent = "";
+  const id = $("n-id").value;
+  const nivel = {
+    id: id || nuevoId(),
+    nombre: nombre,
+    tipo: $("n-tipo").value,
+    min: min,
+    max: max,
+    estado: $("n-estado").value,
+    nota: $("n-nota").value.trim()
+  };
+  const i = datos.niveles.findIndex((n) => n.id === id);
+  if (i >= 0) datos.niveles[i] = nivel;
+  else datos.niveles.push(nivel);
+  if (guardar()) {
+    avisoTemporal(i >= 0 ? "Nivel actualizado." : "Nivel guardado.", "ok");
+    limpiarFormNivel();
+    refrescarTodo();
+  }
+}
+
+function editarNivel(id) {
+  const n = datos.niveles.find((x) => x.id === id);
+  if (!n) return;
+  $("n-id").value = n.id;
+  $("n-nombre").value = n.nombre;
+  $("n-tipo").value = n.tipo;
+  $("n-min").value = String(n.min);
+  $("n-max").value = isFinite(n.max) && n.max !== null ? String(n.max) : "";
+  $("n-estado").value = n.estado;
+  $("n-nota").value = n.nota || "";
+  $("n-error").textContent = "";
+  $("n-guardar").textContent = "Actualizar nivel";
+  $("f-nivel").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function borrarNivel(id) {
+  const n = datos.niveles.find((x) => x.id === id);
+  if (!n || !window.confirm("¿Borrar " + n.nombre + "?")) return;
+  datos.niveles = datos.niveles.filter((x) => x.id !== id);
+  if (guardar()) refrescarTodo();
+}
+
+function pintarNiveles() {
+  const el = $("l-niveles");
+  if (datos.niveles.length === 0) {
+    el.innerHTML = "<div class=\"vacio\">Todavía no hay niveles.</div>";
+    return;
+  }
+  const ordenados = datos.niveles.slice().sort((a, b) => (Number(b.min) || 0) - (Number(a.min) || 0));
+  el.innerHTML = ordenados.map((n) =>
+    "<div class=\"registro\">" +
+      "<div class=\"titulo\"><span>" + esc(n.nombre) + " · " + rangoTexto(n) + " €</span>" +
+      "<span class=\"etiqueta " + esc(n.estado) + "\">" + esc(NOMBRE_ESTADO[n.estado] || n.estado) + "</span></div>" +
+      "<div class=\"detalle\">" + esc(NOMBRE_TIPO[n.tipo] || n.tipo) + (n.nota ? " · " + esc(n.nota) : "") + "</div>" +
+      "<div class=\"acciones\">" +
+        "<button type=\"button\" data-editar-nivel=\"" + esc(n.id) + "\">Editar</button>" +
+        "<button type=\"button\" class=\"peligro\" data-borrar-nivel=\"" + esc(n.id) + "\">Borrar</button>" +
+      "</div>" +
+    "</div>"
+  ).join("");
+}
+
+/* ---------- bitácora: compras ---------- */
+
+function guardarCompra(ev) {
+  ev.preventDefault();
+  const fecha = $("k-fecha").value;
+  const precio = num($("k-precio").value);
+  const total = num($("k-total").value);
+  const comision = num($("k-comision").value) || 0;
+  let btc = num($("k-btc").value);
+  const error = $("k-error");
+  if (!fecha) {
+    error.textContent = "Pon la fecha.";
+    return;
+  }
+  if (!(precio > 0)) {
+    error.textContent = "Pon un precio válido.";
+    return;
+  }
+  if (!(total > 0) || comision >= total) {
+    error.textContent = "El total tiene que ser mayor que la comisión.";
+    return;
+  }
+  if (!(btc > 0)) btc = (total - comision) / precio;
+  error.textContent = "";
+  datos.compras.push({
+    id: nuevoId(),
+    fecha: fecha,
+    precio: precio,
+    btc: Number(btc.toFixed(8)),
+    total: total,
+    comision: comision,
+    nota: $("k-nota").value.trim()
+  });
+  if (guardar()) {
+    avisoTemporal("Compra guardada.", "ok");
+    $("k-precio").value = "";
+    $("k-total").value = "";
+    $("k-btc").value = "";
+    $("k-nota").value = "";
+    refrescarTodo();
+  }
+}
+
+function borrarCompra(id) {
+  const c = datos.compras.find((x) => x.id === id);
+  if (!c || !window.confirm("¿Borrar la compra del " + fechaBonita(c.fecha) + "?")) return;
+  datos.compras = datos.compras.filter((x) => x.id !== id);
+  if (guardar()) refrescarTodo();
+}
+
+function pintarCompras() {
+  const el = $("l-compras");
+  if (datos.compras.length === 0) {
+    el.innerHTML = "<div class=\"vacio\">Todavía no hay compras.</div>";
+    return;
+  }
+  const ordenadas = datos.compras.slice().sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
+  el.innerHTML = ordenadas.map((c) =>
+    "<div class=\"registro\">" +
+      "<div class=\"titulo\"><span>" + fechaBonita(c.fecha) + " · " + fmtEur(Number(c.precio)) + "</span><span>" + fmtEur(Number(c.total), 2) + "</span></div>" +
+      "<div class=\"detalle\">" + fmtBtc(Number(c.btc)) + " BTC · comisión " + fmtEur(Number(c.comision) || 0, 2) + (c.nota ? " · " + esc(c.nota) : "") + "</div>" +
+      "<div class=\"acciones\"><button type=\"button\" class=\"peligro\" data-borrar-compra=\"" + esc(c.id) + "\">Borrar</button></div>" +
+    "</div>"
+  ).join("");
+}
+
+/* ---------- bitácora: notas ---------- */
+
+function guardarNota(ev) {
+  ev.preventDefault();
+  const texto = $("t-nota").value.trim();
+  if (!texto) {
+    $("t-error").textContent = "Escribe algo antes de guardar.";
+    return;
+  }
+  $("t-error").textContent = "";
+  datos.notas.push({ id: nuevoId(), fecha: new Date().toISOString(), texto: texto });
+  if (guardar()) {
+    $("t-nota").value = "";
+    avisoTemporal("Nota guardada.", "ok");
+    pintarNotas();
+  }
+}
+
+function borrarNota(id) {
+  if (!window.confirm("¿Borrar esta nota?")) return;
+  datos.notas = datos.notas.filter((x) => x.id !== id);
+  if (guardar()) pintarNotas();
+}
+
+function pintarNotas() {
+  const el = $("l-notas");
+  if (datos.notas.length === 0) {
+    el.innerHTML = "<div class=\"vacio\">Todavía no hay notas.</div>";
+    return;
+  }
+  const ordenadas = datos.notas.slice().sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
+  el.innerHTML = ordenadas.map((n) => {
+    const d = new Date(n.fecha);
+    const cuando = isNaN(d) ? "" : d.toLocaleString("es-ES", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+    return "<div class=\"registro\">" +
+      "<div class=\"titulo\"><span class=\"etq\">" + esc(cuando) + "</span></div>" +
+      "<div class=\"detalle\">" + esc(n.texto) + "</div>" +
+      "<div class=\"acciones\"><button type=\"button\" class=\"peligro\" data-borrar-nota=\"" + esc(n.id) + "\">Borrar</button></div>" +
+    "</div>";
+  }).join("");
+}
+
+/* ---------- copia de seguridad ---------- */
+
+async function exportar() {
+  const texto = JSON.stringify({
+    app: "btc-zonas",
+    version: 1,
+    exportado: new Date().toISOString(),
+    niveles: datos.niveles,
+    compras: datos.compras,
+    notas: datos.notas
+  }, null, 2);
+  const nombre = "btc-zonas-" + hoyLocal() + ".json";
+  try {
+    const archivo = new File([texto], nombre, { type: "application/json" });
+    if (navigator.canShare && navigator.canShare({ files: [archivo] })) {
+      await navigator.share({ files: [archivo], title: nombre });
+      return;
+    }
+  } catch (e) {
+    if (e && e.name === "AbortError") return;
+  }
+  const enlace = document.createElement("a");
+  enlace.href = URL.createObjectURL(new Blob([texto], { type: "application/json" }));
+  enlace.download = nombre;
+  document.body.appendChild(enlace);
+  enlace.click();
+  setTimeout(() => {
+    URL.revokeObjectURL(enlace.href);
+    enlace.remove();
+  }, 1500);
+}
+
+function importar(ev) {
+  const archivo = ev.target.files && ev.target.files[0];
+  ev.target.value = "";
+  if (!archivo) return;
+  const lector = new FileReader();
+  lector.onload = () => {
+    let d;
+    try {
+      d = JSON.parse(lector.result);
+    } catch (e) {
+      avisoTemporal("El archivo no es una copia válida.", "malo");
+      return;
+    }
+    if (!d || (!Array.isArray(d.niveles) && !Array.isArray(d.compras) && !Array.isArray(d.notas))) {
+      avisoTemporal("El archivo no es una copia de BTC Zonas.", "malo");
+      return;
+    }
+    if (!window.confirm("Esto sustituye tus niveles, compras y notas actuales por los de la copia. ¿Continuar?")) return;
+    datos = normalizar(d);
+    if (guardar()) {
+      avisoTemporal("Copia importada.", "ok");
+      refrescarTodo();
+    }
+  };
+  lector.readAsText(archivo);
+}
+
+function restaurarSistema() {
+  if (!window.confirm("Esto sustituye tus datos actuales por las zonas y compras del sistema (21 nov 2026). ¿Continuar?")) return;
+  datos = copiaSistema();
+  if (guardar()) {
+    avisoTemporal("Datos del sistema restaurados.", "ok");
+    refrescarTodo();
+  }
+}
+
+/* ---------- navegación ---------- */
+
+function irA(vista) {
+  if (!TITULOS[vista]) vista = "panel";
+  document.querySelectorAll(".vista").forEach((s) => s.classList.toggle("activa", s.id === "v-" + vista));
+  document.querySelectorAll(".barra-nav button").forEach((b) => b.classList.toggle("sel", b.dataset.vista === vista));
+  $("titulo").textContent = TITULOS[vista];
+  try {
+    localStorage.setItem(CLAVE_VISTA, vista);
+  } catch (e) {
+    /* sin almacenamiento */
+  }
+  if (vista === "grafico") abrirGrafico();
+  if (vista === "calc") prepararCalculadora();
+  window.scrollTo(0, 0);
+}
+
+function irASub(sub) {
+  document.querySelectorAll(".subvista").forEach((s) => s.classList.toggle("activa", s.id === "sub-" + sub));
+  document.querySelectorAll("#seg-bitacora button").forEach((b) => b.classList.toggle("sel", b.dataset.sub === sub));
+}
+
+function refrescarTodo() {
+  pintarPanel();
+  revisarAvisos();
+  pintarNiveles();
+  pintarCompras();
+  pintarNotas();
+  if (chart && velas.length) construirSeries();
+  if ($("v-calc").classList.contains("activa")) prepararCalculadora();
+}
+
+/* ---------- arranque ---------- */
+
+let temporizadorPrecios = null;
+let temporizadorMiedo = null;
+
+function arrancarTemporizadores() {
+  clearInterval(temporizadorPrecios);
+  clearInterval(temporizadorMiedo);
+  temporizadorPrecios = setInterval(actualizarPrecios, 60000);
+  temporizadorMiedo = setInterval(actualizarMiedo, 30 * 60000);
+}
+
+function pararTemporizadores() {
+  clearInterval(temporizadorPrecios);
+  clearInterval(temporizadorMiedo);
+}
+
+function iniciar() {
+  try {
+    if (!localStorage.getItem(CLAVE)) guardar();
+  } catch (e) {
+    /* sin almacenamiento */
+  }
+
+  document.querySelectorAll(".barra-nav button").forEach((b) => b.addEventListener("click", () => irA(b.dataset.vista)));
+  document.querySelectorAll("#seg-bitacora button").forEach((b) => b.addEventListener("click", () => irASub(b.dataset.sub)));
+  document.querySelectorAll("#seg-intervalo button").forEach((b) => b.addEventListener("click", () => {
+    document.querySelectorAll("#seg-intervalo button").forEach((x) => x.classList.toggle("sel", x === b));
+    intervalo = Number(b.dataset.int);
+    velas = [];
+    cargarVelas();
+  }));
+
+  ["c-importe", "c-comision", "c-entrada", "c-inval", "c-objetivo"].forEach((id) => $(id).addEventListener("input", calcular));
+  document.querySelectorAll("[data-importe]").forEach((b) => b.addEventListener("click", () => {
+    $("c-importe").value = b.dataset.importe;
+    calcular();
+  }));
+  $("c-usar-precio").addEventListener("click", () => {
+    if (isFinite(mercado.eur)) {
+      $("c-entrada").value = String(Math.round(mercado.eur));
+      calcular();
+    } else {
+      avisoTemporal("Todavía no hay precio.", "atento");
+    }
+  });
+  $("c-registrar").addEventListener("click", registrarDesdeCalculadora);
+
+  $("f-nivel").addEventListener("submit", guardarNivel);
+  $("n-limpiar").addEventListener("click", limpiarFormNivel);
+  $("f-compra").addEventListener("submit", guardarCompra);
+  $("f-nota").addEventListener("submit", guardarNota);
+  $("k-fecha").value = hoyLocal();
+
+  document.addEventListener("click", (ev) => {
+    const b = ev.target.closest("button");
+    if (!b) return;
+    if (b.dataset.editarNivel) editarNivel(b.dataset.editarNivel);
+    else if (b.dataset.borrarNivel) borrarNivel(b.dataset.borrarNivel);
+    else if (b.dataset.borrarCompra) borrarCompra(b.dataset.borrarCompra);
+    else if (b.dataset.borrarNota) borrarNota(b.dataset.borrarNota);
+  });
+
+  $("b-exportar").addEventListener("click", exportar);
+  $("b-importar").addEventListener("click", () => $("b-archivo").click());
+  $("b-archivo").addEventListener("change", importar);
+  $("b-restaurar").addEventListener("click", restaurarSistema);
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      actualizarPrecios();
+      actualizarMiedo();
+      conectarDirecto();
+      arrancarTemporizadores();
+      if (chart && $("v-grafico").classList.contains("activa")) cargarVelas();
+    } else {
+      desconectarDirecto();
+      pararTemporizadores();
+    }
+  });
+
+  pintarNiveles();
+  pintarCompras();
+  pintarNotas();
+  pintarPanel();
+  pintarCuentaAtras();
+  setInterval(pintarCuentaAtras, 15000);
+
+  let vistaInicial = "panel";
+  try {
+    vistaInicial = localStorage.getItem(CLAVE_VISTA) || "panel";
+  } catch (e) {
+    /* sin almacenamiento */
+  }
+  irA(vistaInicial);
+
+  actualizarPrecios();
+  actualizarMiedo();
+  conectarDirecto();
+  arrancarTemporizadores();
+
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("sw.js").catch(() => {
+      /* la app funciona igual sin modo sin conexión */
+    });
+  }
+}
+
+iniciar();

@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0d12">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="BTC Zonas">
+  <title>BTC Zonas</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" href="icon-192.png">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="cabecera">
+    <h1 id="titulo">Panel</h1>
+    <div class="estado">
+      <span id="punto" class="punto"></span>
+      <span id="fuente">Conectando…</span>
+    </div>
+  </header>
+
+  <div id="aviso" class="aviso oculto" role="status"></div>
+
+  <main>
+    <section id="v-panel" class="vista activa">
+      <div class="tarjeta">
+        <div class="precio-eur" id="p-eur">—</div>
+        <div class="precio-sub"><span id="p-usd">—</span></div>
+        <div class="precio-sub">
+          <span id="p-24h">—</span>
+          <span class="sep">·</span>
+          <span id="p-hoy">—</span>
+        </div>
+      </div>
+
+      <div class="rejilla">
+        <div class="mini"><div class="etq">Máx 24 h</div><div class="val" id="p-max">—</div></div>
+        <div class="mini"><div class="etq">Mín 24 h</div><div class="val" id="p-min">—</div></div>
+        <div class="mini"><div class="etq">Cierre de la vela</div><div class="val" id="p-cierre">—</div></div>
+        <div class="mini"><div class="etq">Actualizado</div><div class="val" id="p-act">—</div></div>
+      </div>
+
+      <div class="tarjeta">
+        <div class="fila">
+          <span class="etq">Miedo y codicia</span>
+          <span id="fg-val" class="fuerte">—</span>
+        </div>
+        <div class="barra"><div id="fg-barra" class="barra-relleno"></div></div>
+        <div class="fila peq">
+          <span>Ayer: <b id="fg-ayer">—</b></span>
+          <span>Hace 7 días: <b id="fg-semana">—</b></span>
+        </div>
+      </div>
+
+      <div class="tarjeta">
+        <div class="etq">Tus niveles más cercanos</div>
+        <div id="cercanos" class="lista-simple"></div>
+      </div>
+
+      <div class="tarjeta">
+        <div class="etq">Tu cartera BTC</div>
+        <div id="cartera" class="lista-simple"></div>
+      </div>
+    </section>
+
+    <section id="v-grafico" class="vista">
+      <div class="segmento" id="seg-intervalo">
+        <button type="button" data-int="1440" class="sel">Diario</button>
+        <button type="button" data-int="10080">Semanal</button>
+      </div>
+      <div id="grafico" class="grafico"></div>
+      <div class="leyenda">
+        <span><i class="cuadro" style="background:#1D9E75"></i>Zona activa</span>
+        <span><i class="cuadro" style="background:#378ADD"></i>Comprada</span>
+        <span><i class="cuadro" style="background:#888780"></i>Rota</span>
+        <span><i class="cuadro" style="background:#E24B4A"></i>Resistencia</span>
+        <span><i class="cuadro" style="background:#EF9F27"></i>Pausa</span>
+        <span><i class="cuadro linea"></i>Bollinger 20</span>
+      </div>
+      <p class="nota" id="graf-estado"></p>
+    </section>
+
+    <section id="v-calc" class="vista">
+      <div class="tarjeta formulario">
+        <label>Importe (€)
+          <input id="c-importe" type="text" inputmode="decimal" value="20" autocomplete="off">
+        </label>
+        <div class="botones-rapidos">
+          <button type="button" data-importe="20">20 € normal</button>
+          <button type="button" data-importe="40">40 € fuerte</button>
+        </div>
+        <label>Comisión (€)
+          <input id="c-comision" type="text" inputmode="decimal" value="1" autocomplete="off">
+        </label>
+        <label>Precio de entrada (€)
+          <input id="c-entrada" type="text" inputmode="decimal" autocomplete="off">
+        </label>
+        <div class="botones-rapidos">
+          <button type="button" id="c-usar-precio">Usar precio actual</button>
+        </div>
+        <label>Invalidación (€)
+          <input id="c-inval" type="text" inputmode="decimal" autocomplete="off">
+        </label>
+        <div class="botones-rapidos" id="c-inval-rapidos"></div>
+        <label>Objetivo (€)
+          <input id="c-objetivo" type="text" inputmode="decimal" autocomplete="off">
+        </label>
+        <div class="botones-rapidos" id="c-obj-rapidos"></div>
+      </div>
+      <div class="tarjeta" id="c-resultado"></div>
+      <button type="button" class="primario ancho" id="c-registrar">Registrar esta compra</button>
+      <p class="nota">Compra al contado, sin apalancamiento. La invalidación es el precio al que darías la idea por fallida; no es una orden de venta.</p>
+    </section>
+
+    <section id="v-bitacora" class="vista">
+      <div class="segmento" id="seg-bitacora">
+        <button type="button" data-sub="niveles" class="sel">Niveles</button>
+        <button type="button" data-sub="compras">Compras</button>
+        <button type="button" data-sub="notas">Notas</button>
+      </div>
+
+      <div id="sub-niveles" class="subvista activa">
+        <form id="f-nivel" class="tarjeta formulario" novalidate>
+          <input type="hidden" id="n-id">
+          <label>Nombre
+            <input id="n-nombre" type="text" placeholder="Z7" autocomplete="off">
+          </label>
+          <label>Tipo
+            <select id="n-tipo">
+              <option value="zona">Zona de compra</option>
+              <option value="resistencia">Resistencia</option>
+              <option value="soporte">Soporte</option>
+              <option value="pausa">Pausa</option>
+              <option value="otro">Otro</option>
+            </select>
+          </label>
+          <div class="dos">
+            <label>Precio mínimo
+              <input id="n-min" type="text" inputmode="decimal" autocomplete="off">
+            </label>
+            <label>Precio máximo
+              <input id="n-max" type="text" inputmode="decimal" placeholder="opcional" autocomplete="off">
+            </label>
+          </div>
+          <label>Estado
+            <select id="n-estado">
+              <option value="activa">Activa</option>
+              <option value="comprada">Comprada</option>
+              <option value="rota">Rota</option>
+            </select>
+          </label>
+          <label>Nota
+            <textarea id="n-nota" rows="2"></textarea>
+          </label>
+          <p class="error" id="n-error"></p>
+          <div class="dos">
+            <button type="submit" class="primario" id="n-guardar">Guardar nivel</button>
+            <button type="button" id="n-limpiar">Limpiar</button>
+          </div>
+        </form>
+        <div id="l-niveles"></div>
+      </div>
+
+      <div id="sub-compras" class="subvista">
+        <form id="f-compra" class="tarjeta formulario" novalidate>
+          <div class="dos">
+            <label>Fecha
+              <input id="k-fecha" type="date">
+            </label>
+            <label>Precio (€)
+              <input id="k-precio" type="text" inputmode="decimal" autocomplete="off">
+            </label>
+          </div>
+          <div class="dos">
+            <label>Total pagado (€)
+              <input id="k-total" type="text" inputmode="decimal" autocomplete="off">
+            </label>
+            <label>Comisión (€)
+              <input id="k-comision" type="text" inputmode="decimal" value="1" autocomplete="off">
+            </label>
+          </div>
+          <label>BTC recibidos
+            <input id="k-btc" type="text" inputmode="decimal" placeholder="si lo dejas vacío, se calcula" autocomplete="off">
+          </label>
+          <label>Nota
+            <input id="k-nota" type="text" placeholder="Z6 señal fuerte" autocomplete="off">
+          </label>
+          <p class="error" id="k-error"></p>
+          <button type="submit" class="primario ancho">Guardar compra</button>
+        </form>
+        <div id="l-compras"></div>
+      </div>
+
+      <div id="sub-notas" class="subvista">
+        <form id="f-nota" class="tarjeta formulario" novalidate>
+          <label>Nueva nota
+            <textarea id="t-nota" rows="3" placeholder="Idea de mercado, lectura de capturas…"></textarea>
+          </label>
+          <p class="error" id="t-error"></p>
+          <button type="submit" class="primario ancho">Guardar nota</button>
+        </form>
+        <div id="l-notas"></div>
+      </div>
+
+      <div class="tarjeta">
+        <div class="etq">Copia de seguridad</div>
+        <p class="nota">Tus datos solo viven en este teléfono. Exporta una copia de vez en cuando.</p>
+        <div class="botones-rapidos">
+          <button type="button" id="b-exportar">Exportar</button>
+          <button type="button" id="b-importar">Importar</button>
+          <button type="button" id="b-restaurar">Datos del sistema</button>
+        </div>
+        <input type="file" id="b-archivo" accept="application/json,.json" class="oculto">
+      </div>
+    </section>
+  </main>
+
+  <nav class="barra-nav">
+    <button type="button" data-vista="panel" class="sel" aria-label="Panel">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19h16M6 15l4-5 3 3 5-7"/></svg>
+      <span>Panel</span>
+    </button>
+    <button type="button" data-vista="grafico" aria-label="Gráfico">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4v16M7 8h-2v6h2M17 4v16M17 7h-2v9h2M12 6v12M12 10h-2v4h2"/></svg>
+      <span>Gráfico</span>
+    </button>
+    <button type="button" data-vista="calc" aria-label="Calculadora">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18H6zM9 7h6M9 12h1M14 12h1M9 16h1M14 16h1"/></svg>
+      <span>Calculadora</span>
+    </button>
+    <button type="button" data-vista="bitacora" aria-label="Bitácora">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h11a1 1 0 0 1 1 1v17H7a1 1 0 0 1-1-1zM9 8h6M9 12h6M9 16h3"/></svg>
+      <span>Bitácora</span>
+    </button>
+  </nav>
+
+  <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js" defer></script>
+  <script src="app.js" defer></script>
+</body>
+</html>
