@@ -774,7 +774,9 @@ function abrirGrafico() {
    Cuando el precio cruza un nivel de liquidación, ese nivel se da por ejecutado y desaparece.
    Cuando baja el interés abierto, todas las posiciones vivas se reducen en la misma proporción. */
 
-const APALANCAMIENTOS = [[10, 0.3], [25, 0.3], [50, 0.25], [100, 0.15]];
+const APALANCAMIENTOS = [[10, 0.1], [25, 0.25], [50, 0.35], [100, 0.3]];
+const PASO_LIQ_MS = 1800000;
+const VELAS_LIQ = 336;
 const MANTENIMIENTO = 0.004;
 const CLAVE_LIQ = "btczonas.liq";
 
@@ -821,7 +823,7 @@ function modeloLiquidaciones(velasF, mapaOI, mapaLS) {
       if (v > 0 && v < 1) partLargos = v;
     }
     const a = mapaOI.get(t);
-    const b = mapaOI.get(t + 3600000);
+    const b = mapaOI.get(t + PASO_LIQ_MS);
     if (!a || !b) continue;
     const oiA = Number(a.sumOpenInterest);
     const oiB = Number(b.sumOpenInterest);
@@ -858,9 +860,9 @@ async function calcularLiquidaciones() {
   calculandoLiq = true;
   try {
     const res = await Promise.all([
-      getJSON("https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=1h&limit=720", 12000),
-      seriePaginada("https://fapi.binance.com/futures/data/openInterestHist?symbol=BTCUSDT&period=1h", 500, 720),
-      seriePaginada("https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=BTCUSDT&period=1h", 500, 720)
+      getJSON("https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=30m&limit=" + (VELAS_LIQ + 1), 12000),
+      seriePaginada("https://fapi.binance.com/futures/data/openInterestHist?symbol=BTCUSDT&period=30m", 500, VELAS_LIQ + 2),
+      seriePaginada("https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=BTCUSDT&period=30m", 500, VELAS_LIQ + 2)
     ]);
     if (!Array.isArray(res[0]) || res[0].length < 24 || res[1].size < 24) throw new Error("pocos datos");
     const m = modeloLiquidaciones(res[0], res[1], res[2]);
@@ -948,15 +950,16 @@ function dibujarLiquidaciones() {
   const f = factorEur();
   if (!isFinite(f)) return;
   const P = liq.precioUsd;
-  const abajo = liq.niveles.filter((n) => n.precio < P && n.largo > 0).sort((x, y) => y.largo - x.largo).slice(0, 12);
-  const arriba = liq.niveles.filter((n) => n.precio > P && n.corto > 0).sort((x, y) => y.corto - x.corto).slice(0, 12);
+  const cerca = (n) => Math.abs(n.precio / P - 1) <= 0.12;
+  const abajo = liq.niveles.filter((n) => n.precio < P && n.largo > 0 && cerca(n)).sort((x, y) => y.largo - x.largo).slice(0, 8);
+  const arriba = liq.niveles.filter((n) => n.precio > P && n.corto > 0 && cerca(n)).sort((x, y) => y.corto - x.corto).slice(0, 8);
   const maximo = Math.max(1, ...abajo.map((n) => n.largo), ...arriba.map((n) => n.corto));
   const dibujar = (n, valor) => {
     const rel = valor / maximo;
     lineasLiq.push(serieVelas.createPriceLine({
       price: n.precio * f,
-      color: "rgba(232,197,71," + (0.18 + 0.67 * rel).toFixed(2) + ")",
-      lineWidth: rel > 0.66 ? 4 : (rel > 0.33 ? 3 : 2),
+      color: "rgba(232,197,71," + (0.15 + 0.6 * rel).toFixed(2) + ")",
+      lineWidth: rel > 0.6 ? 3 : (rel > 0.3 ? 2 : 1),
       lineStyle: 0,
       axisLabelVisible: false,
       title: ""
