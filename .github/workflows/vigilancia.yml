@@ -1,0 +1,54 @@
+name: Vigilancia BTC
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+    - cron: "3 0 * * *"
+  workflow_dispatch:
+    inputs:
+      prueba:
+        description: "Mandar un aviso de prueba"
+        type: boolean
+        default: true
+  push:
+    branches: [main]
+    paths:
+      - "vigilancia/config.json"
+      - "vigilancia/vigilar.mjs"
+      - ".github/workflows/vigilancia.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vigilancia
+  cancel-in-progress: false
+
+jobs:
+  vigilar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Revisar el mercado
+        run: node vigilancia/vigilar.mjs
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          PRUEBA: ${{ github.event_name == 'workflow_dispatch' && inputs.prueba && '1' || '0' }}
+
+      - name: Guardar registro
+        if: always()
+        run: |
+          git config user.name "vigilancia-btc"
+          git config user.email "vigilancia-btc@users.noreply.github.com"
+          git add vigilancia/estado.json vigilancia/registro.csv 2>/dev/null || true
+          if ! git diff --cached --quiet; then
+            git commit -m "Vigilancia: registro actualizado"
+            git pull --rebase origin main
+            git push
+          fi

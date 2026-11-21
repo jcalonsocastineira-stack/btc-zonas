@@ -1,0 +1,332 @@
+// Vigilancia BTC · se ejecuta en GitHub Actions cada 30 minutos.
+// Usa las mismas reglas que el widget de Scriptable (modelo v2) con las velas de Kraken BTCEUR,
+// manda avisos al móvil con ntfy y guarda un registro diario con el resultado a 30 y 90 días.
+// Es una ayuda: la decisión de compra la toma el usuario con el widget.
+
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const DIR = path.dirname(fileURLToPath(import.meta.url));
+const F_CONFIG = path.join(DIR, "config.json");
+const F_ESTADO = path.join(DIR, "estado.json");
+const F_REGISTRO = path.join(DIR, "registro.csv");
+const DIA = 86400;
+const SEMANA = 604800;
+
+const CONFIG = JSON.parse(fs.readFileSync(F_CONFIG, "utf8"));
+const primeraVez = !fs.existsSync(F_ESTADO);
+const estado = primeraVez
+  ? { ultimoCierre: 0, avisos: {}, rotas: {}, pausa: null }
+  : JSON.parse(fs.readFileSync(F_ESTADO, "utf8"));
+estado.avisos = estado.avisos || {};
+estado.rotas = estado.rotas || {};
+
+const TOPIC = process.env.NTFY_TOPIC || "";
+const PRUEBA = process.env.PRUEBA === "1";
+const SIN_ENVIO = process.env.SIN_ENVIO === "1" || !TOPIC;
+const AHORA = process.env.AHORA ? Number(process.env.AHORA) : Math.floor(Date.now() / 1000);
+
+const nf = new Intl.NumberFormat("es-ES", { maximumFractionDigits: 0 });
+const nf1 = new Intl.NumberFormat("es-ES", { maximumFractionDigits: 1 });
+const eur = (n) => nf.format(Math.round(n)) + " €";
+const dia = (t) => new Date(t * 1000).toISOString().slice(0, 10);
+const fechaCorta = (t) => new Date(t * 1000).toLocaleDateString("es-ES", { day: "numeric", month: "short", timeZone: "UTC" });
+const horaEsp = (t) => new Date(t * 1000).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Madrid" });
+
+let cambios = false;
+
+// ---------- avisos ----------
+async function avisar(clave, titulo, mensaje, prioridad = 3, etiquetas = []) {
+  if (clave && estado.avisos[clave]) return;
+  if (SIN_ENVIO) {
+    console.log("[AVISO]", titulo, "·", mensaje);
+  } else {
+    const r = await fetch("https://ntfy.sh", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ topic: TOPIC, title: titulo, message: mensaje, priority: prioridad, tags: etiquetas, click: CONFIG.app })
+    });
+    if (!r.ok) throw new Error("ntfy respondió " + r.status);
+  }
+  if (clave) {
+    estado.avisos[clave] = AHORA;
+    cambios = true;
+  }
+}
+
+// ---------- datos ----------
+async function velasKraken(intervalo) {
+  const r = await fetch("https://api.kraken.com/0/public/OHLC?pair=XBTEUR&interval=" + intervalo);
+  const j = await r.json();
+  if (j.error && j.error.length) throw new Error("Kraken: " + j.error.join(", "));
+  const clave = Object.keys(j.result).find((k) => k !== "last");
+  return j.result[clave].map((x) => ({ t: +x[0], o: +x[1], h: +x[2], l: +x[3], c: +x[4], v: +x[6] }));
+}
+
+async function miedoActual() {
+  try {
+    const r = await fetch("https://api.alternative.me/fng/?limit=1");
+    const j = await r.json();
+    return Number(j.data[0].value);
+  } catch (e) {
+    return NaN;
+  }
+}
+
+// ---------- indicadores (iguales que el widget) ----------
+function rsi(c, n = 14) {
+  if (c.length < n + 1) return NaN;
+  let g = 0;
+  let p = 0;
+  for (let i = 1; i <= n; i++) {
+    const d = c[i] - c[i - 1];
+    if (d > 0) g += d;
+    else p -= d;
+  }
+  let mg = g / n;
+  let mp = p / n;
+  for (let i = n + 1; i < c.length; i++) {
+    const d = c[i] - c[i - 1];
+    mg = (mg * (n - 1) + Math.max(d, 0)) / n;
+    mp = (mp * (n - 1) + Math.max(-d, 0)) / n;
+  }
+  return mp === 0 ? 100 : 100 - 100 / (1 + mg / mp);
+}
+
+const media = (a, n) => (a.length >= n ? a.slice(-n).reduce((s, x) => s + x, 0) / n : NaN);
+
+function indicadoresEn(dias, i, semanas) {
+  const d = dias.slice(0, i + 1);
+  const x = d[d.length - 1];
+  const c = d.map((y) => y.c);
+  const m20 = media(c, 20);
+  const sd = Math.sqrt(c.slice(-20).reduce((s, y) => s + (y - m20) * (y - m20), 0) / 20);
+  let atr = 0;
+  for (let k = 1; k < d.length; k++) {
+    const tr = Math.max(d[k].h - d[k].l, Math.abs(d[k].h - d[k - 1].c), Math.abs(d[k].l - d[k - 1].c));
+    if (k <= 14) {
+      atr += tr;
+      if (k === 14) atr /= 14;
+    } else {
+      atr = (atr * 13 + tr) / 14;
+    }
+  }
+  const cerradas = semanas.filter((w) => w.t + SEMANA <= x.t + DIA);
+  const cw = cerradas.map((w) => w.c);
+  return {
+    x: x,
+    previa: d[d.length - 2],
+    rsi: rsi(c),
+    banda: m20 - 2 * sd,
+    volRel: x.v / media(d.map((y) => y.v), 20),
+    atr: atr,
+    sma200: media(c, 200),
+    ma20w: media(cw, 20),
+    ma200w: media(cw, 200),
+    cierreSemana: cerradas.length ? cerradas[cerradas.length - 1].c : NaN
+  };
+}
+
+function zonasVigentes() {
+  return CONFIG.zonas.map((z) => Object.assign({}, z, { estado: estado.rotas[z.id] ? "rota" : z.estado }));
+}
+
+function evaluar(ind) {
+  const x = ind.x;
+  const margen = 0.5 * ind.atr;
+  const rango = x.h - x.l;
+  const pos = rango > 0 ? (x.c - x.l) / rango : 0;
+  const cuerpo = Math.abs(x.o - x.c);
+  const mecha = Math.min(x.o, x.c) - x.l;
+  const candidatas = zonasVigentes()
+    .filter((z) => z.estado !== "rota" && x.l <= z.max + margen && x.c >= z.min - margen)
+    .sort((a, b) => a.max - b.max);
+  let zona = candidatas.find((z) => z.estado !== "comprada") || candidatas[0] || null;
+  const rota = zona && zona.estado !== "comprada" && x.c < zona.min ? zona : null;
+  if (rota) zona = null;
+  const comprada = !!zona && zona.estado === "comprada";
+  const banda = x.l < ind.banda && x.c > ind.banda;
+  const mechaOk = (mecha / x.c) * 100 >= 1 && mecha >= cuerpo;
+  const rechazo = (banda || mechaOk) && pos >= 0.5 && (!zona || x.c >= zona.min);
+  const confirmacion = ind.rsi < 45 || ind.volRel >= 1.3;
+  const cerca200 = isFinite(ind.ma200w) && x.l <= ind.ma200w * 1.03;
+  const capitulacion = ind.rsi < 35 && ind.volRel >= 1.5;
+  const bajista = (isFinite(ind.sma200) && x.c < ind.sma200) || (isFinite(ind.ma20w) && ind.cierreSemana < ind.ma20w);
+  let mult = 1;
+  if (cerca200) mult = 2;
+  else {
+    if (capitulacion) mult = 2;
+    if (bajista) mult *= 0.5;
+  }
+  const senal = !!zona && rechazo && confirmacion;
+  const cautela = senal && mult < 1;
+  const compra = senal && !comprada && !cautela;
+  return {
+    zona, rota, comprada, margen, pos, banda, mechaOk, rechazo, confirmacion, cerca200, capitulacion, bajista, mult,
+    senal, cautela, compra, fuerte: compra && mult >= 2, importeWidget: compra ? (mult >= 2 ? 40 : 20) : 0
+  };
+}
+
+function eventoCerca(desde, horas) {
+  for (const e of CONFIG.eventos || []) {
+    const ts = Date.parse(e.fecha + "T" + (e.hora || "00:00") + ":00+01:00") / 1000;
+    if (ts - desde > -3600 && ts - desde <= horas * 3600) return Object.assign({ ts }, e);
+  }
+  return null;
+}
+
+function importeRegla(ind, s, miedo, momento) {
+  if (!s.compra) return 0;
+  const base = s.cerca200 && s.capitulacion ? 50 : s.mult >= 2 ? 40 : 20;
+  const dist = ind.x.c > s.zona.min ? (ind.x.c - s.zona.min) / ind.x.c : 0;
+  let imp = Math.min(base, dist > 0 ? 2.5 / dist : base);
+  if (eventoCerca(momento, 24)) imp /= 2;
+  if (miedo > 75) imp /= 2;
+  imp = Math.floor(imp / 5) * 5;
+  return imp >= 20 ? imp : 0;
+}
+
+function resumen(ind, s) {
+  return "RSI " + nf1.format(ind.rsi) + " · volumen " + ind.volRel.toLocaleString("es-ES", { maximumFractionDigits: 2 }) + "× · " +
+    (s.cerca200 ? "en la media de 200 semanas" : s.capitulacion ? "capitulación" : "tendencia " + (s.bajista ? "bajista" : "normal"));
+}
+
+// ---------- registro ----------
+const CABECERA = "fecha,cierre,minimo,zona,resultado,importe_widget,importe_regla,rsi,vol_rel,cerca200,capitulacion,bajista,cierre_30d,rent_30d,cierre_90d,rent_90d";
+
+function leerRegistro() {
+  if (!fs.existsSync(F_REGISTRO)) return [];
+  return fs.readFileSync(F_REGISTRO, "utf8").trim().split("\n").slice(1).filter(Boolean).map((l) => l.split(","));
+}
+
+function textoResultado(s) {
+  if (s.compra) return s.fuerte ? "fuerte" : "normal";
+  if (s.cautela) return "cautela";
+  if (s.senal && s.comprada) return "zona_comprada";
+  return "ninguna";
+}
+
+// ---------- principal ----------
+async function main() {
+  const [dias, semanas, miedo] = await Promise.all([velasKraken(1440), velasKraken(10080), miedoActual()]);
+  let iCerrada = dias.length - 1;
+  while (iCerrada >= 0 && dias[iCerrada].t + DIA > AHORA) iCerrada--;
+  const viva = dias[dias.length - 1];
+  const hayViva = viva.t + DIA > AHORA;
+
+  if (primeraVez) {
+    estado.ultimoCierre = dias[iCerrada - 1].t;
+    await avisar(null, "Vigilancia BTC activada", "Recibirás avisos de zonas, señales provisionales y del cierre diario (1:00). Precio: " + eur(viva.c) + ".", 3, ["white_check_mark"]);
+    cambios = true;
+  }
+  if (PRUEBA) {
+    await avisar(null, "Prueba de Vigilancia BTC", "Los avisos funcionan. Precio actual: " + eur(viva.c) + " (Kraken).", 3, ["bell"]);
+  }
+
+  // 1) velas cerradas nuevas
+  const registro = leerRegistro();
+  for (let i = 0; i <= iCerrada; i++) {
+    const x = dias[i];
+    if (x.t <= estado.ultimoCierre) continue;
+    const ind = indicadoresEn(dias, i, semanas);
+    const s = evaluar(ind);
+    const regla = importeRegla(ind, s, miedo, x.t + DIA);
+    const fecha = fechaCorta(x.t);
+
+    if (s.rota && !estado.rotas[s.rota.id]) {
+      estado.rotas[s.rota.id] = dia(x.t);
+      await avisar("rota-" + s.rota.id + "-" + dia(x.t), s.rota.id + " rota", "La vela del " + fecha + " cerró en " + eur(x.c) + ", por debajo de " + eur(s.rota.min) + ". El widget la desactiva.", 4, ["warning"]);
+    }
+    for (const z of zonasVigentes()) {
+      if (z.estado === "activa" && x.c < z.min && !estado.rotas[z.id]) {
+        estado.rotas[z.id] = dia(x.t);
+        await avisar("rota-" + z.id + "-" + dia(x.t), z.id + " rota", "La vela del " + fecha + " cerró en " + eur(x.c) + ", por debajo de " + eur(z.min) + ".", 4, ["warning"]);
+      }
+    }
+    if (CONFIG.pausa && ind.previa && x.c < CONFIG.pausa && ind.previa.c >= CONFIG.pausa) {
+      await avisar("pausa-" + dia(x.t), "Compras en pausa", "Cierre del " + fecha + " en " + eur(x.c) + ", por debajo de " + eur(CONFIG.pausa) + ". El widget deja de dar señales hasta que lo reanudes.", 5, ["rotating_light"]);
+    }
+
+    if (s.compra) {
+      await avisar("cierre-" + dia(x.t), "Señal " + (s.fuerte ? "FUERTE" : "normal") + " en " + s.zona.id + " · cierre " + fecha,
+        "Cierre " + eur(x.c) + " · " + resumen(ind, s) + ". Importe: widget " + s.importeWidget + " € · regla nueva " + (regla ? regla + " €" : "no compra") + ". Confírmalo en el widget.", 5, ["moneybag"]);
+    } else if (estado.avisos["prov-" + dia(x.t)]) {
+      const motivo = s.cautela ? "queda con cautela (no se compra)" : s.senal && s.comprada ? s.zona.id + " ya está comprada" : "no se ha confirmado";
+      await avisar("cierre-" + dia(x.t), "Cierre " + fecha + ": sin compra", "La señal provisional " + motivo + ". Cierre " + eur(x.c) + ".", 3, ["information_source"]);
+    }
+
+    const fila = [dia(x.t), Math.round(x.c), Math.round(x.l), s.zona ? s.zona.id : "", textoResultado(s), s.importeWidget, regla,
+      ind.rsi.toFixed(1), ind.volRel.toFixed(2), s.cerca200 ? 1 : 0, s.capitulacion ? 1 : 0, s.bajista ? 1 : 0, "", "", "", ""];
+    const k = registro.findIndex((r) => r[0] === fila[0]);
+    if (k >= 0) registro[k] = fila;
+    else registro.push(fila);
+    estado.ultimoCierre = x.t;
+    cambios = true;
+  }
+
+  // 2) resultados a 30 y 90 días
+  const porFecha = new Map(dias.map((y) => [dia(y.t), y]));
+  for (const r of registro) {
+    const t0 = Date.parse(r[0] + "T00:00:00Z") / 1000;
+    for (const [n, col] of [[30, 12], [90, 14]]) {
+      if (r[col]) continue;
+      const y = porFecha.get(dia(t0 + n * DIA));
+      if (y && y.t + DIA <= AHORA) {
+        r[col] = Math.round(y.c);
+        r[col + 1] = ((y.c / Number(r[1]) - 1) * 100).toFixed(1);
+        cambios = true;
+      }
+    }
+  }
+  registro.sort((a, b) => a[0].localeCompare(b[0]));
+  const textoRegistro = [CABECERA].concat(registro.map((r) => r.join(","))).join("\n") + "\n";
+
+  // 3) vela en curso
+  if (hayViva) {
+    const hoy = dia(viva.t);
+    for (const z of zonasVigentes()) {
+      if (z.estado === "activa" && viva.c <= z.max && viva.c >= z.min) {
+        await avisar("entra-" + z.id + "-" + hoy, "BTC entra en " + z.id, "Precio " + eur(viva.c) + " (" + eur(z.min) + "–" + eur(z.max) + "). No compres todavía: espera al cierre de la 1:00.", 4, ["round_pushpin"]);
+      }
+    }
+    const ind = indicadoresEn(dias, dias.length - 1, semanas);
+    const s = evaluar(ind);
+    const quedan = viva.t + DIA - AHORA;
+    const quedanTxt = Math.floor(quedan / 3600) + " h " + String(Math.floor((quedan % 3600) / 60)).padStart(2, "0") + " min";
+    if (s.compra) {
+      const regla = importeRegla(ind, s, miedo, viva.t + DIA);
+      await avisar("prov-" + hoy, "Señal provisional " + (s.fuerte ? "FUERTE" : "normal") + " en " + s.zona.id,
+        "Precio " + eur(viva.c) + " · " + resumen(ind, s) + ". Cierre en " + quedanTxt + ". Importe: widget " + s.importeWidget + " € · regla nueva " + (regla ? regla + " €" : "no compra") + ". Todavía no compres.", 4, ["hourglass"]);
+      if (quedan <= 5400) {
+        await avisar("precierre-" + hoy, "Cierre en " + quedanTxt + ": la señal sigue", "Precio " + eur(viva.c) + ". Si se mantiene, a la 1:00 habrá señal " + (s.fuerte ? "FUERTE" : "normal") + " en " + s.zona.id + ".", 4, ["alarm_clock"]);
+      }
+    }
+  }
+
+  // 4) datos macro en las próximas 24 h
+  const ev = eventoCerca(AHORA, 24);
+  if (ev) {
+    await avisar("evento-" + ev.fecha + "-" + ev.nombre, "Dato macro: " + ev.nombre, "Se publica el " + ev.fecha + " a las " + ev.hora + " (hora de España). Evita decidir en la hora del dato.", 3, ["calendar"]);
+  }
+
+  // limpiar avisos de hace más de 120 días
+  for (const [k, t] of Object.entries(estado.avisos)) if (AHORA - t > 120 * DIA) delete estado.avisos[k];
+
+  if (cambios) {
+    fs.writeFileSync(F_ESTADO, JSON.stringify(estado, null, 1) + "\n");
+    fs.writeFileSync(F_REGISTRO, textoRegistro);
+  }
+  console.log("Precio " + eur(viva.c) + " · última vela cerrada " + dia(dias[iCerrada].t) + " · cambios: " + (cambios ? "sí" : "no") + " · " + horaEsp(AHORA));
+}
+
+main().catch(async (e) => {
+  console.error(e);
+  try {
+    await avisar("error-" + dia(AHORA), "Vigilancia BTC: error", "No se pudo revisar el mercado: " + String(e.message || e).slice(0, 140) + ". Se reintentará en 30 minutos.", 2, ["x"]);
+    if (cambios) fs.writeFileSync(F_ESTADO, JSON.stringify(estado, null, 1) + "\n");
+  } catch (e2) {
+    console.error(e2);
+  }
+  process.exit(1);
+});
