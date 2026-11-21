@@ -873,7 +873,7 @@ function modeloLiquidaciones(velasF, mapaOI, mapaLS) {
 }
 
 async function calcularLiquidaciones() {
-  if (calculandoLiq) return;
+  if (calculandoLiq || !mostrarLiq) return;
   calculandoLiq = true;
   try {
     const res = await Promise.all([
@@ -925,6 +925,8 @@ function mayorGrupo(lado) {
 function pintarLiquidaciones() {
   const el = $("liq-resumen");
   if (!el) return;
+  $("tarjeta-liq").classList.toggle("oculto", !mostrarLiq);
+  if (!mostrarLiq) return;
   $("liq-act").textContent = liq.actualizado
     ? liq.actualizado.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })
     : "—";
@@ -994,6 +996,8 @@ function alternarLiquidaciones() {
     /* sin almacenamiento */
   }
   dibujarLiquidaciones();
+  pintarLiquidaciones();
+  if (mostrarLiq && liq.niveles.length === 0) calcularLiquidaciones();
 }
 
 /* ---------- análisis: indicadores, señal provisional, importe, derivados y calendario ---------- */
@@ -1431,7 +1435,7 @@ function textoParaClaude() {
       " · cuentas en largo " + f1(d.cuentasLargo) + " % · grandes traders en largo " + f1(d.topLargo) + " % · compras/ventas agresivas 24 h " + (isFinite(d.agresivos) ? d.agresivos.toLocaleString("es-ES", { maximumFractionDigits: 2 }) : "—") +
       " · prima Coinbase " + (isFinite(d.primaCoinbase) ? fmtPct(d.primaCoinbase, 3) : "—"));
   }
-  if (liq.niveles.length) {
+  if (mostrarLiq && liq.niveles.length) {
     const P = liq.precioUsd;
     const f = factorEur();
     const abajo = [1, 3, 5].map((x) => millones(sumaLiq("largo", P * (1 - x / 100), P))).join(" / ");
