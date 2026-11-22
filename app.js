@@ -170,6 +170,7 @@ let datos = cargarDatos();
 function guardar() {
   try {
     localStorage.setItem(CLAVE, JSON.stringify(datos));
+    if (typeof programarEnvio === "function") programarEnvio();
     return true;
   } catch (e) {
     avisoTemporal("No se pudo guardar en el teléfono.", "malo");
@@ -503,7 +504,11 @@ function revisarAvisos() {
     const cercaPausa = pausas.find((n) => p >= n.min && p <= n.min * 1.02);
     const zonaCerca = zonas.find((z) => p > techo(z) && p <= techo(z) * 1.01);
 
-    if (bajoPausa) {
+    const pausaVig = typeof pausaActiva === "function" ? pausaActiva() : null;
+    if (pausaVig) {
+      texto = "Compras en pausa desde el " + fechaBonita(pausaVig.fecha) + " (cierre " + miles(pausaVig.cierre) + " €). Revisa y reanuda en Bitácora → Sistema.";
+      clase = "malo";
+    } else if (bajoPausa) {
       texto = "Por debajo del nivel de pausa (" + miles(bajoPausa.min) + " €). Si la vela cierra así, el widget se pausa.";
       clase = "malo";
     } else if (zonaDentro) {
@@ -1303,7 +1308,8 @@ function evaluarSenal(ind) {
   }
   const senal = !!zona && rechazo && confirmacion;
   const cautela = senal && mult < 1;
-  const compra = senal && !comprada && !cautela;
+  const pausada = !!(typeof pausaActiva === "function" && pausaActiva());
+  const compra = senal && !comprada && !cautela && !pausada;
   const pausaNivel = datos.niveles.find((n) => n.tipo === "pausa" && n.estado !== "rota" && isFinite(n.min));
   const pausa = pausaNivel && ind.ayer && v.close < pausaNivel.min && ind.ayer.close >= pausaNivel.min ? pausaNivel : null;
   return {
@@ -1325,6 +1331,7 @@ function evaluarSenal(ind) {
     mult: mult,
     senal: senal,
     cautela: cautela,
+    pausada: pausada,
     compra: compra,
     fuerte: compra && mult >= 2,
     importeWidget: compra ? (mult >= 2 ? 40 : 20) : 0,
@@ -1359,6 +1366,7 @@ function liquidezMarcada() {
 
 function importeRecomendado(ind, s) {
   if (!s.senal) return { importe: 0, texto: "Sin señal provisional: no corresponde compra." };
+  if (s.pausada && !s.comprada) return { importe: 0, texto: "Compras en pausa: reanuda en Bitácora → Sistema si procede." };
   if (s.comprada) return { importe: 0, texto: s.zona.nombre + " ya está comprada: una compra por zona." };
   if (s.cautela) return { importe: 0, texto: "Señal con cautela (tendencia bajista sin capitulación ni 200 semanas): no se compra." };
   let base = 20;
@@ -1440,6 +1448,7 @@ function resumenCerrada() {
   let resultado = "Sin señal";
   if (s.rota) resultado = (s.zonaRota ? s.zonaRota.nombre : "Zona") + " rota";
   else if (s.compra) resultado = (s.fuerte ? "Señal FUERTE" : "Señal normal") + " en " + s.zona.nombre;
+  else if (s.senal && s.pausada && !s.comprada) resultado = "Señal en pausa: no se compra";
   else if (s.cautela) resultado = "Con cautela: no se compra";
   else if (s.senal && s.comprada) resultado = s.zona.nombre + " ya comprada";
   if (s.pausa) resultado += " · pausa";
@@ -1500,7 +1509,9 @@ function pintarAnalisis() {
     html += filaHtml("ADX > 25 <span class=\"sec\">en observación, no decide</span>", ind.adx.toLocaleString("es-ES", { maximumFractionDigits: 1 }) + " " + marca(ind.adx > 25));
     let resultado = "Sin señal";
     let clase = "baja";
-    if (s.senal && s.comprada) {
+    if (s.senal && s.pausada && !s.comprada) {
+      resultado = "Señal en pausa: no se compra";
+    } else if (s.senal && s.comprada) {
       resultado = s.zona.nombre + " ya comprada";
     } else if (s.cautela) {
       resultado = "Con cautela: no se compra";
@@ -1709,6 +1720,8 @@ function textoParaClaude() {
   const rearmes = infoRearme().map((r) => r.zona.nombre + " se rearma si cierra bajo " + miles(r.umbral) + " € y sobre " + miles(r.suelo) + " €");
   if (rearmes.length) l.push("Rearme: " + rearmes.join(" · "));
   const proximos = eventosOrdenados().filter((e) => e.ts > Date.now() - 3600000).slice(0, 4).map((e) => e.nombre + " " + cuandoEvento(e));
+  const pv = pausaActiva();
+  l.push("Sistema: compras " + (pv ? "EN PAUSA desde el " + fechaBonita(pv.fecha) : "activas") + " · vigilancia " + (vig.estado && vig.estado.sincronizado && vig.estado.sincronizado.ts >= (Number(leerLocal(CLAVE_ULTIMO_ENVIO)) || 0) ? "al día" : "pendiente de sincronizar"));
   l.push("Datos macro apuntados: " + (proximos.length ? proximos.join(" · ") : "ninguno"));
   const r = resumenCartera();
   const valorActual = r.btc * mercado.eur;
@@ -1783,6 +1796,8 @@ function resultadoEn(precio) {
   } else if (s.compra) {
     texto = (s.fuerte ? "FUERTE" : "Normal") + " · widget " + s.importeWidget + " € · regla " + (imp.importe ? imp.importe + " €" : "no compra");
     tipo = s.fuerte ? "fuerte" : "normal";
+  } else if (s.senal && s.pausada && !s.comprada) {
+    texto = "En pausa: no se compra";
   } else if (s.cautela) {
     texto = "Con cautela: no se compra";
   } else if (s.senal && s.comprada) {
@@ -1912,7 +1927,10 @@ function zonaPorDefecto() {
 
 function marcarComprada(idZona) {
   const z = datos.niveles.find((n) => n.id === idZona);
-  if (z) z.estado = "comprada";
+  if (z) {
+    z.estado = "comprada";
+    z.editado = Date.now();
+  }
 }
 
 function compraDeZona(idZona) {
@@ -1959,6 +1977,7 @@ function revisarRearme() {
     const v = cerradas.find((x) => x.time > desde && x.time >= compraTs && x.close < r.umbral && x.close >= r.suelo);
     if (v) {
       r.zona.estado = "activa";
+      r.zona.editado = Date.now();
       r.zona.nota = (r.zona.nota ? r.zona.nota + ". " : "") + "Rearmada el " + fechaBonita(new Date(v.time * 1000).toISOString().slice(0, 10)) + " (cierre " + miles(v.close) + " €)";
       cambio = true;
       avisoTemporal(r.zona.nombre + " vuelve a estar disponible (rearme).", "ok");
@@ -1970,6 +1989,186 @@ function revisarRearme() {
     /* sin almacenamiento */
   }
   if (cambio && guardar()) refrescarTodo();
+}
+
+/* ---------- conexión con la vigilancia automática (un solo sistema) ----------
+   La app manda una copia de tus zonas, niveles, eventos y niveles de rearme por un tema de control de ntfy
+   (tu tema + "-control"); la vigilancia de GitHub la lee cada 30 minutos.
+   La vigilancia publica su estado (zonas rotas, rearmes, pausa) en vigilancia/estado.json y la app lo lee.
+   No viajan importes, cantidades ni la cartera. */
+
+const CLAVE_TEMA = "btczonas.tema";
+const CLAVE_REANUDAR = "btczonas.reanudar";
+const CLAVE_ULTIMO_ENVIO = "btczonas.ultimoEnvio";
+const vig = { estado: null, leido: null, error: "" };
+let temporizadorSync = null;
+
+function leerLocal(clave) {
+  try {
+    return localStorage.getItem(clave) || "";
+  } catch (e) {
+    return "";
+  }
+}
+
+function escribirLocal(clave, valor) {
+  try {
+    localStorage.setItem(clave, valor);
+  } catch (e) {
+    /* sin almacenamiento */
+  }
+}
+
+function temaControl() {
+  const t = leerLocal(CLAVE_TEMA).trim();
+  return t ? t + "-control" : "";
+}
+
+function fotoParaVigilancia() {
+  const zonas = datos.niveles
+    .filter((n) => n.tipo === "zona" && isFinite(n.min))
+    .map((z) => {
+      const c = z.estado === "comprada" ? compraDeZona(z.id) : null;
+      return {
+        id: z.nombre,
+        min: Math.round(z.min),
+        max: Math.round(techo(z)),
+        estado: z.estado,
+        rearme: c ? { desde: c.fecha, umbral: Math.round(Number(c.precio) * (1 - REARME)) } : undefined
+      };
+    });
+  const res = datos.niveles.find((n) => n.tipo === "resistencia" && n.estado !== "rota" && isFinite(n.min));
+  const pausa = datos.niveles.find((n) => n.tipo === "pausa" && n.estado !== "rota" && isFinite(n.min));
+  return {
+    tipo: "sync",
+    v: 1,
+    ts: Date.now(),
+    zonas: zonas,
+    resistencia: res ? { min: Math.round(res.min), max: Math.round(techo(res)) } : null,
+    pausa: pausa ? Math.round(pausa.min) : null,
+    eventos: datos.eventos.map((e) => ({ fecha: e.fecha, hora: e.hora || "00:00", nombre: e.nombre })),
+    reanudar: Number(leerLocal(CLAVE_REANUDAR)) || 0
+  };
+}
+
+async function enviarAVigilancia(manual) {
+  const tema = temaControl();
+  if (!tema) {
+    if (manual) avisoTemporal("Primero guarda tu tema de ntfy en Bitácora → Sistema.", "atento");
+    pintarSistema();
+    return false;
+  }
+  try {
+    const r = await fetch("https://ntfy.sh/" + encodeURIComponent(tema), {
+      method: "POST",
+      body: JSON.stringify(fotoParaVigilancia())
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    escribirLocal(CLAVE_ULTIMO_ENVIO, String(Date.now()));
+    if (manual) avisoTemporal("Enviado a la vigilancia. Lo aplicará en la próxima revisión (máx. 30 min).", "ok");
+    pintarSistema();
+    return true;
+  } catch (e) {
+    vig.error = "No se pudo enviar a ntfy (" + e.message + ").";
+    if (manual) avisoTemporal(vig.error, "malo");
+    pintarSistema();
+    return false;
+  }
+}
+
+function programarEnvio() {
+  clearTimeout(temporizadorSync);
+  temporizadorSync = setTimeout(() => enviarAVigilancia(false), 1500);
+}
+
+async function leerVigilancia() {
+  try {
+    const r = await fetch("vigilancia/estado.json?t=" + Date.now(), { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    vig.estado = await r.json();
+    vig.leido = new Date();
+    vig.error = "";
+    adoptarEstadoVigilancia();
+  } catch (e) {
+    vig.error = "No se pudo leer el estado de la vigilancia.";
+  }
+  pintarSistema();
+  revisarAvisos();
+}
+
+// La vigilancia es quien detecta zonas rotas: si rompió una zona después de tu última edición, la app la marca rota.
+function adoptarEstadoVigilancia() {
+  const e = vig.estado;
+  if (!e) return;
+  let cambio = false;
+  for (const [nombre, fecha] of Object.entries(e.rotas || {})) {
+    const z = datos.niveles.find((n) => n.tipo === "zona" && n.nombre === nombre);
+    if (!z || z.estado === "rota" || z.estado === "comprada") continue;
+    const tRota = Date.parse(fecha + "T00:00:00Z") + 86400000;
+    if (!(z.editado > tRota)) {
+      z.estado = "rota";
+      z.nota = (z.nota ? z.nota + ". " : "") + "Rota el " + fechaBonita(fecha) + " (vigilancia)";
+      cambio = true;
+    }
+  }
+  if (cambio && guardar()) refrescarTodo();
+}
+
+function pausaActiva() {
+  const e = vig.estado;
+  if (!e || !e.pausa) return null;
+  const reanudar = Number(leerLocal(CLAVE_REANUDAR)) || 0;
+  return reanudar > e.pausa.t * 1000 ? null : e.pausa;
+}
+
+function reanudarSistema() {
+  const p = pausaActiva();
+  if (!p) return;
+  if (!window.confirm("Las compras están en pausa desde el " + fechaBonita(p.fecha) + " (cierre " + miles(p.cierre) + " €). ¿Has revisado el sistema y quieres reanudar?")) return;
+  escribirLocal(CLAVE_REANUDAR, String(Date.now()));
+  enviarAVigilancia(true);
+  refrescarTodo();
+}
+
+function pintarSistema() {
+  const el = $("sistema-estado");
+  if (!el) return;
+  const tema = leerLocal(CLAVE_TEMA);
+  const enviado = Number(leerLocal(CLAVE_ULTIMO_ENVIO)) || 0;
+  const sync = vig.estado && vig.estado.sincronizado ? vig.estado.sincronizado.ts : 0;
+  let estadoSync = "Sin enviar todavía";
+  let clase = "baja";
+  if (!tema) estadoSync = "Falta el tema de ntfy";
+  else if (enviado && sync >= enviado) {
+    estadoSync = "Al día";
+    clase = "sube";
+  } else if (enviado) {
+    estadoSync = "Enviado, pendiente de aplicar (máx. 30 min)";
+    clase = "";
+  }
+  const p = pausaActiva();
+  const ultima = vig.estado && vig.estado.ultimoCierre ? fechaBonita(new Date(vig.estado.ultimoCierre * 1000).toISOString().slice(0, 10)) : "—";
+  const rotas = vig.estado ? Object.keys(vig.estado.rotas || {}).join(", ") : "";
+  el.innerHTML =
+    filaHtml("Vigilancia ↔ app", esc(estadoSync), clase) +
+    filaHtml("Última vela revisada", esc(ultima)) +
+    filaHtml("Compras", p ? "EN PAUSA desde el " + esc(fechaBonita(p.fecha)) : "activas", p ? "baja" : "sube") +
+    (rotas ? filaHtml("Zonas rotas detectadas", esc(rotas)) : "") +
+    (vig.error ? "<div class=\"vacio\">" + esc(vig.error) + "</div>" : "");
+  const b = $("b-reanudar");
+  if (b) b.classList.toggle("oculto", !p);
+  const inp = $("s-tema");
+  if (inp && !inp.value && tema) inp.value = tema;
+}
+
+function guardarTema() {
+  const t = $("s-tema").value.trim();
+  if (!/^[A-Za-z0-9_-]{6,64}$/.test(t)) {
+    avisoTemporal("El tema solo puede tener letras, números, guiones y guiones bajos (6 a 64).", "malo");
+    return;
+  }
+  escribirLocal(CLAVE_TEMA, t);
+  enviarAVigilancia(true);
 }
 
 /* ---------- calculadora ---------- */
@@ -2130,6 +2329,7 @@ function guardarNivel(ev) {
   const id = $("n-id").value;
   const nivel = {
     id: id || nuevoId(),
+    editado: Date.now(),
     nombre: nombre,
     tipo: $("n-tipo").value,
     min: min,
@@ -2421,6 +2621,7 @@ function arrancarTemporizadores() {
   temporizadorAnalisis = setInterval(() => {
     actualizarAnalisis();
     actualizarDerivados();
+    leerVigilancia();
   }, 5 * 60000);
 }
 
@@ -2449,6 +2650,9 @@ function iniciar() {
 
   $("b-centrar").addEventListener("click", centrarGrafico);
   $("b-copiar").addEventListener("click", copiarParaClaude);
+  $("b-tema").addEventListener("click", guardarTema);
+  $("b-enviar").addEventListener("click", () => enviarAVigilancia(true));
+  $("b-reanudar").addEventListener("click", reanudarSistema);
   $("a-sim").addEventListener("input", pintarSimulacion);
   $("f-evento").addEventListener("submit", guardarEvento);
   $("e-fecha").value = hoyLocal();
@@ -2507,6 +2711,7 @@ function iniciar() {
       calcularLiquidaciones();
       actualizarAnalisis();
       actualizarDerivados();
+      leerVigilancia();
       conectarDirecto();
       arrancarTemporizadores();
       if (chart && $("v-grafico").classList.contains("activa")) cargarVelas();
@@ -2537,6 +2742,7 @@ function iniciar() {
     actualizarAnalisis();
     actualizarDerivados();
   });
+  leerVigilancia();
   actualizarMiedo();
   conectarDirecto();
   arrancarTemporizadores();

@@ -22,6 +22,7 @@ const estado = primeraVez
 estado.avisos = estado.avisos || {};
 estado.rotas = estado.rotas || {};
 estado.rearmadas = estado.rearmadas || {};
+estado.pausa = estado.pausa || null;
 
 const TOPIC = process.env.NTFY_TOPIC || "";
 const PRUEBA = process.env.PRUEBA === "1";
@@ -36,6 +37,61 @@ const fechaCorta = (t) => new Date(t * 1000).toLocaleDateString("es-ES", { day: 
 const horaEsp = (t) => new Date(t * 1000).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Madrid" });
 
 let cambios = false;
+
+// La app manda una copia de zonas, eventos y niveles por el tema de control de ntfy; si existe, manda sobre config.json.
+const SYNC = () => estado.sincronizado || null;
+const ZONAS = () => (SYNC() && Array.isArray(SYNC().zonas) ? SYNC().zonas : CONFIG.zonas);
+const EVENTOS = () => (SYNC() && Array.isArray(SYNC().eventos) ? SYNC().eventos : CONFIG.eventos || []);
+const PAUSA = () => (SYNC() && isFinite(SYNC().pausa) ? SYNC().pausa : CONFIG.pausa);
+const RESISTENCIA = () => (SYNC() && SYNC().resistencia ? SYNC().resistencia : CONFIG.resistencia);
+
+async function leerControl() {
+  if (!TOPIC || SIN_ENVIO) return;
+  const r = await fetch("https://ntfy.sh/" + encodeURIComponent(TOPIC + "-control") + "/json?poll=1&since=12h");
+  if (!r.ok) throw new Error("ntfy control " + r.status);
+  const lineas = (await r.text()).split("\n").filter(Boolean);
+  let ultimo = null;
+  for (const l of lineas) {
+    let m;
+    try {
+      m = JSON.parse(l);
+    } catch (e) {
+      continue;
+    }
+    if (m.event !== "message") continue;
+    let d;
+    try {
+      d = JSON.parse(m.message);
+    } catch (e) {
+      continue;
+    }
+    if (d && d.tipo === "sync" && Number(d.ts) > 0 && (!ultimo || d.ts > ultimo.ts)) ultimo = d;
+  }
+  if (ultimo) aplicarSync(ultimo);
+}
+
+function aplicarSync(d) {
+  const previo = SYNC();
+  if (previo && previo.ts >= d.ts) return;
+  estado.sincronizado = {
+    ts: d.ts,
+    zonas: (d.zonas || []).map((z) => ({ id: String(z.id), min: Number(z.min), max: Number(z.max), estado: z.estado, rearme: z.rearme || undefined })),
+    eventos: d.eventos || [],
+    pausa: Number(d.pausa),
+    resistencia: d.resistencia || null,
+    reanudar: Number(d.reanudar) || 0
+  };
+  // zona reactivada a mano en la app después de romperse
+  for (const z of estado.sincronizado.zonas) {
+    const rota = estado.rotas[z.id];
+    if (rota && z.estado !== "rota" && d.ts > Date.parse(rota + "T00:00:00Z") + DIA * 1000) delete estado.rotas[z.id];
+  }
+  if (estado.pausa && estado.sincronizado.reanudar > estado.pausa.t * 1000) {
+    estado.pausa = null;
+    estado.reanudada = AHORA;
+  }
+  cambios = true;
+}
 
 // ---------- avisos ----------
 async function avisar(clave, titulo, mensaje, prioridad = 3, etiquetas = []) {
@@ -166,7 +222,7 @@ const claveCompra = (z) => (z.rearme ? z.id + "-" + z.rearme.desde : "");
 
 function zonasVigentes(t) {
   const momento = t === undefined ? AHORA : t;
-  return CONFIG.zonas.map((z) => {
+  return ZONAS().map((z) => {
     let e = z.estado;
     // una compra solo cuenta para las velas desde su fecha (las anteriores se evalúan como antes de comprar)
     if (e === "comprada" && z.rearme && momento < Date.parse(z.rearme.desde + "T00:00:00Z") / 1000) e = "activa";
@@ -213,7 +269,7 @@ function evaluar(ind) {
 }
 
 function eventoCerca(desde, horas) {
-  for (const e of CONFIG.eventos || []) {
+  for (const e of EVENTOS()) {
     const ts = Date.parse(e.fecha + "T" + (e.hora || "00:00") + ":00+01:00") / 1000;
     if (ts - desde > -3600 && ts - desde <= horas * 3600) return Object.assign({ ts }, e);
   }
@@ -245,6 +301,7 @@ function leerRegistro() {
 }
 
 function textoResultado(s) {
+  if (s.pausada) return "pausa";
   if (s.compra) return s.fuerte ? "fuerte" : "normal";
   if (s.cautela) return "cautela";
   if (s.senal && s.comprada) return "zona_comprada";
@@ -253,6 +310,14 @@ function textoResultado(s) {
 
 // ---------- principal ----------
 async function main() {
+  try {
+    await leerControl();
+  } catch (e) {
+    console.error("No se pudo leer el tema de control:", e.message);
+  }
+  if (estado.reanudada && !estado.avisos["reanudada-" + estado.reanudada]) {
+    await avisar("reanudada-" + estado.reanudada, "Compras reanudadas", "Has reanudado el sistema desde la app. Vuelven a valer las señales.", 3, ["arrow_forward"]);
+  }
   const [dias, semanas, miedo] = await Promise.all([velasKraken(1440), velasKraken(10080), miedoActual()]);
   let iCerrada = dias.length - 1;
   while (iCerrada >= 0 && dias[iCerrada].t + DIA > AHORA) iCerrada--;
@@ -300,13 +365,24 @@ async function main() {
         await avisar("rota-" + z.id + "-" + dia(x.t), z.id + " rota", "La vela del " + fecha + " cerró en " + eur(x.c) + ", por debajo de " + eur(z.min) + ".", 4, ["warning"]);
       }
     }
-    if (CONFIG.pausa && ind.previa && x.c < CONFIG.pausa && ind.previa.c >= CONFIG.pausa) {
-      await avisar("pausa-" + dia(x.t), "Compras en pausa", "Cierre del " + fecha + " en " + eur(x.c) + ", por debajo de " + eur(CONFIG.pausa) + ". El widget deja de dar señales hasta que lo reanudes.", 5, ["rotating_light"]);
+    if (PAUSA() && ind.previa && x.c < PAUSA() && ind.previa.c >= PAUSA() && !estado.pausa) {
+      estado.pausa = { fecha: dia(x.t), t: x.t, cierre: Math.round(x.c) };
+      await avisar("pausa-" + dia(x.t), "Compras en pausa", "Cierre del " + fecha + " en " + eur(x.c) + ", por debajo de " + eur(PAUSA()) + ". No habrá señales de compra hasta que lo revises y toques «Reanudar» en la app.", 5, ["rotating_light"]);
+    }
+    if (estado.pausa && s.compra) {
+      s.compra = false;
+      s.pausada = true;
+    }
+    const resis = RESISTENCIA();
+    if (resis && x.c > resis.max) {
+      await avisar("resistencia-" + dia(x.t), "Por encima de la resistencia", "Cierre del " + fecha + " en " + eur(x.c) + ", por encima de " + eur(resis.max) + ". Si se mantiene unos días, revisa tus zonas.", 3, ["chart_with_upwards_trend"]);
     }
 
     if (s.compra) {
       await avisar("cierre-" + dia(x.t), "Señal " + (s.fuerte ? "FUERTE" : "normal") + " en " + s.zona.id + " · cierre " + fecha,
         "Cierre " + eur(x.c) + " · " + resumen(ind, s) + ". Importe: widget " + s.importeWidget + " € · regla nueva " + (regla ? regla + " €" : "no compra") + ". Confírmalo en el widget.", 5, ["moneybag"]);
+    } else if (s.pausada) {
+      await avisar("cierre-" + dia(x.t), "Señal en pausa · " + s.zona.id, "Habría señal en " + s.zona.id + " (cierre " + eur(x.c) + "), pero las compras están en pausa desde el " + estado.pausa.fecha + ". Revísalo y toca «Reanudar» en la app si procede.", 4, ["pause_button"]);
     } else if (estado.avisos["prov-" + dia(x.t)]) {
       const motivo = s.cautela ? "queda con cautela (no se compra)" : s.senal && s.comprada ? s.zona.id + " ya está comprada" : "no se ha confirmado";
       await avisar("cierre-" + dia(x.t), "Cierre " + fecha + ": sin compra", "La señal provisional " + motivo + ". Cierre " + eur(x.c) + ".", 3, ["information_source"]);
@@ -344,11 +420,12 @@ async function main() {
     const hoy = dia(viva.t);
     for (const z of zonasVigentes()) {
       if (z.estado === "activa" && viva.c <= z.max && viva.c >= z.min) {
-        await avisar("entra-" + z.id + "-" + hoy, "BTC entra en " + z.id, "Precio " + eur(viva.c) + " (" + eur(z.min) + "–" + eur(z.max) + "). No compres todavía: espera al cierre de la 1:00.", 4, ["round_pushpin"]);
+        await avisar("entra-" + z.id + "-" + hoy, "BTC entra en " + z.id, "Precio " + eur(viva.c) + " (" + eur(z.min) + "–" + eur(z.max) + "). " + (estado.pausa ? "Las compras siguen en pausa: revisa el sistema antes de reanudar." : "No compres todavía: espera al cierre de la 1:00."), 4, ["round_pushpin"]);
       }
     }
     const ind = indicadoresEn(dias, dias.length - 1, semanas);
     const s = evaluar(ind);
+    if (estado.pausa) s.compra = false;
     const quedan = viva.t + DIA - AHORA;
     const quedanTxt = Math.floor(quedan / 3600) + " h " + String(Math.floor((quedan % 3600) / 60)).padStart(2, "0") + " min";
     if (s.compra) {
