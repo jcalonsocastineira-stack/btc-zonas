@@ -9,7 +9,7 @@
  "pausa": null,
  "rearmadas": {},
  "sincronizado": {
-  "ts": 1795308447914,
+  "ts": 1795309733123,
   "zonas": [
    {
     "id": "Z2",
@@ -48,6 +48,12 @@
      "desde": "2026-11-22",
      "umbral": 52248
     }
+   },
+   {
+    "id": "Z7",
+    "min": 47400,
+    "max": 49500,
+    "estado": "activa"
    }
   ],
   "eventos": [
