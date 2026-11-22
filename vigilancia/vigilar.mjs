@@ -1,7 +1,7 @@
 // Vigilancia BTC · se ejecuta en GitHub Actions cada 30 minutos.
 // Usa las mismas reglas que el widget de Scriptable (modelo v2) con las velas de Kraken BTCEUR,
 // manda avisos al móvil con ntfy y guarda un registro diario con el resultado a 30 y 90 días.
-// Es una ayuda: la decisión de compra la toma el usuario con el widget.
+// Es una ayuda: la decisión de compra la toma el usuario con la app.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -357,7 +357,7 @@ async function main() {
 
     if (s.rota && !estado.rotas[s.rota.id]) {
       estado.rotas[s.rota.id] = dia(x.t);
-      await avisar("rota-" + s.rota.id + "-" + dia(x.t), s.rota.id + " rota", "La vela del " + fecha + " cerró en " + eur(x.c) + ", por debajo de " + eur(s.rota.min) + ". El widget la desactiva.", 4, ["warning"]);
+      await avisar("rota-" + s.rota.id + "-" + dia(x.t), s.rota.id + " rota", "La vela del " + fecha + " cerró en " + eur(x.c) + ", por debajo de " + eur(s.rota.min) + ". Queda marcada como rota en la app.", 4, ["warning"]);
     }
     for (const z of zonasVigentes(x.t)) {
       if (z.estado === "activa" && x.c < z.min && !estado.rotas[z.id]) {
@@ -380,7 +380,7 @@ async function main() {
 
     if (s.compra) {
       await avisar("cierre-" + dia(x.t), "Señal " + (s.fuerte ? "FUERTE" : "normal") + " en " + s.zona.id + " · cierre " + fecha,
-        "Cierre " + eur(x.c) + " · " + resumen(ind, s) + ". Importe: widget " + s.importeWidget + " € · regla nueva " + (regla ? regla + " €" : "no compra") + ". Confírmalo en el widget.", 5, ["moneybag"]);
+        "Cierre " + eur(x.c) + " · " + resumen(ind, s) + ". Importe: widget " + s.importeWidget + " € · regla nueva " + (regla ? regla + " €" : "no compra") + ". Revísalo en la app (Análisis → Última vela cerrada).", 5, ["moneybag"]);
     } else if (s.pausada) {
       await avisar("cierre-" + dia(x.t), "Señal en pausa · " + s.zona.id, "Habría señal en " + s.zona.id + " (cierre " + eur(x.c) + "), pero las compras están en pausa desde el " + estado.pausa.fecha + ". Revísalo y toca «Reanudar» en la app si procede.", 4, ["pause_button"]);
     } else if (estado.avisos["prov-" + dia(x.t)]) {
