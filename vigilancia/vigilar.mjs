@@ -113,6 +113,38 @@ function indicadoresEn(dias, i, semanas) {
       atr = (atr * 13 + tr) / 14;
     }
   }
+  let sP = 0;
+  let sN = 0;
+  let sT = 0;
+  let adx = NaN;
+  let sumaDx = 0;
+  for (let k = 1; k < d.length; k++) {
+    const sube = d[k].h - d[k - 1].h;
+    const baja = d[k - 1].l - d[k].l;
+    const p = sube > baja && sube > 0 ? sube : 0;
+    const n = baja > sube && baja > 0 ? baja : 0;
+    const tr = Math.max(d[k].h - d[k].l, Math.abs(d[k].h - d[k - 1].c), Math.abs(d[k].l - d[k - 1].c));
+    if (k <= 14) {
+      sP += p;
+      sN += n;
+      sT += tr;
+    } else {
+      sP = sP - sP / 14 + p;
+      sN = sN - sN / 14 + n;
+      sT = sT - sT / 14 + tr;
+    }
+    if (k >= 14 && sT > 0) {
+      const dp = (100 * sP) / sT;
+      const dn = (100 * sN) / sT;
+      const dx = dp + dn > 0 ? (100 * Math.abs(dp - dn)) / (dp + dn) : 0;
+      if (k < 28) {
+        sumaDx += dx;
+        if (k === 27) adx = sumaDx / 14;
+      } else {
+        adx = (adx * 13 + dx) / 14;
+      }
+    }
+  }
   const cerradas = semanas.filter((w) => w.t + SEMANA <= x.t + DIA);
   const cw = cerradas.map((w) => w.c);
   return {
@@ -122,6 +154,7 @@ function indicadoresEn(dias, i, semanas) {
     banda: m20 - 2 * sd,
     volRel: x.v / media(d.map((y) => y.v), 20),
     atr: atr,
+    adx: adx,
     sma200: media(c, 200),
     ma20w: media(cw, 20),
     ma200w: media(cw, 200),
@@ -131,9 +164,12 @@ function indicadoresEn(dias, i, semanas) {
 
 const claveCompra = (z) => (z.rearme ? z.id + "-" + z.rearme.desde : "");
 
-function zonasVigentes() {
+function zonasVigentes(t) {
+  const momento = t === undefined ? AHORA : t;
   return CONFIG.zonas.map((z) => {
     let e = z.estado;
+    // una compra solo cuenta para las velas desde su fecha (las anteriores se evalúan como antes de comprar)
+    if (e === "comprada" && z.rearme && momento < Date.parse(z.rearme.desde + "T00:00:00Z") / 1000) e = "activa";
     if (e === "comprada" && z.rearme && estado.rearmadas[claveCompra(z)]) e = "activa";
     if (estado.rotas[z.id] && e !== "comprada") e = "rota";
     return Object.assign({}, z, { estado: e });
@@ -147,7 +183,7 @@ function evaluar(ind) {
   const pos = rango > 0 ? (x.c - x.l) / rango : 0;
   const cuerpo = Math.abs(x.o - x.c);
   const mecha = Math.min(x.o, x.c) - x.l;
-  const candidatas = zonasVigentes()
+  const candidatas = zonasVigentes(x.t)
     .filter((z) => z.estado !== "rota" && x.l <= z.max + margen && x.c >= z.min - margen)
     .sort((a, b) => a.max - b.max);
   let zona = candidatas.find((z) => z.estado !== "comprada") || candidatas[0] || null;
@@ -201,7 +237,7 @@ function resumen(ind, s) {
 }
 
 // ---------- registro ----------
-const CABECERA = "fecha,cierre,minimo,zona,resultado,importe_widget,importe_regla,rsi,vol_rel,cerca200,capitulacion,bajista,cierre_30d,rent_30d,cierre_90d,rent_90d";
+const CABECERA = "fecha,cierre,minimo,zona,resultado,importe_widget,importe_regla,rsi,vol_rel,cerca200,capitulacion,bajista,cierre_30d,rent_30d,cierre_90d,rent_90d,adx";
 
 function leerRegistro() {
   if (!fs.existsSync(F_REGISTRO)) return [];
@@ -243,7 +279,7 @@ async function main() {
     const fecha = fechaCorta(x.t);
 
     // rearme: zona comprada que cierra un 5 % por debajo del precio pagado y sigue dentro de la zona
-    for (const z of zonasVigentes()) {
+    for (const z of zonasVigentes(x.t)) {
       if (z.estado !== "comprada" || !z.rearme) continue;
       const desde = Date.parse(z.rearme.desde + "T00:00:00Z") / 1000;
       if (x.t >= desde && x.c < z.rearme.umbral && x.c >= z.min * 0.985 && !estado.rearmadas[claveCompra(z)]) {
@@ -258,7 +294,7 @@ async function main() {
       estado.rotas[s.rota.id] = dia(x.t);
       await avisar("rota-" + s.rota.id + "-" + dia(x.t), s.rota.id + " rota", "La vela del " + fecha + " cerró en " + eur(x.c) + ", por debajo de " + eur(s.rota.min) + ". El widget la desactiva.", 4, ["warning"]);
     }
-    for (const z of zonasVigentes()) {
+    for (const z of zonasVigentes(x.t)) {
       if (z.estado === "activa" && x.c < z.min && !estado.rotas[z.id]) {
         estado.rotas[z.id] = dia(x.t);
         await avisar("rota-" + z.id + "-" + dia(x.t), z.id + " rota", "La vela del " + fecha + " cerró en " + eur(x.c) + ", por debajo de " + eur(z.min) + ".", 4, ["warning"]);
@@ -277,7 +313,7 @@ async function main() {
     }
 
     const fila = [dia(x.t), Math.round(x.c), Math.round(x.l), s.zona ? s.zona.id : "", textoResultado(s), s.importeWidget, regla,
-      ind.rsi.toFixed(1), ind.volRel.toFixed(2), s.cerca200 ? 1 : 0, s.capitulacion ? 1 : 0, s.bajista ? 1 : 0, "", "", "", ""];
+      ind.rsi.toFixed(1), ind.volRel.toFixed(2), s.cerca200 ? 1 : 0, s.capitulacion ? 1 : 0, s.bajista ? 1 : 0, "", "", "", "", isFinite(ind.adx) ? ind.adx.toFixed(1) : ""];
     const k = registro.findIndex((r) => r[0] === fila[0]);
     if (k >= 0) registro[k] = fila;
     else registro.push(fila);
@@ -299,6 +335,7 @@ async function main() {
       }
     }
   }
+  for (const r of registro) while (r.length < 17) r.push("");
   registro.sort((a, b) => a[0].localeCompare(b[0]));
   const textoRegistro = [CABECERA].concat(registro.map((r) => r.join(","))).join("\n") + "\n";
 

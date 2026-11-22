@@ -34,7 +34,11 @@
       "id": "Z6",
       "min": 50700,
       "max": 52500,
-      "estado": "activa"
+      "estado": "comprada",
+      "rearme": {
+        "desde": "2026-11-22",
+        "umbral": 52248
+      }
     }
   ],
   "resistencia": {
