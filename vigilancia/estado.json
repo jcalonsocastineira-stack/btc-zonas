@@ -7,5 +7,61 @@
  },
  "rotas": {},
  "pausa": null,
- "rearmadas": {}
+ "rearmadas": {},
+ "sincronizado": {
+  "ts": 1795308447914,
+  "zonas": [
+   {
+    "id": "Z2",
+    "min": 69400,
+    "max": 71000,
+    "estado": "comprada",
+    "rearme": {
+     "desde": "2026-10-25",
+     "umbral": 68975
+    }
+   },
+   {
+    "id": "Z3",
+    "min": 63200,
+    "max": 66700,
+    "estado": "rota"
+   },
+   {
+    "id": "Z4",
+    "min": 58500,
+    "max": 62300,
+    "estado": "rota"
+   },
+   {
+    "id": "Z5",
+    "min": 55500,
+    "max": 57500,
+    "estado": "rota"
+   },
+   {
+    "id": "Z6",
+    "min": 50700,
+    "max": 52500,
+    "estado": "comprada",
+    "rearme": {
+     "desde": "2026-11-22",
+     "umbral": 52248
+    }
+   }
+  ],
+  "eventos": [
+   {
+    "fecha": "2026-11-25",
+    "hora": "14:30",
+    "nombre": "PCE de EE. UU. (hora habitual, compruébala)"
+   }
+  ],
+  "pausa": 50650,
+  "resistencia": {
+   "min": 73000,
+   "max": 74600
+  },
+  "reanudar": 0
+ }
 }
