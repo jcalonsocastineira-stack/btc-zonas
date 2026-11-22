@@ -2755,3 +2755,12 @@ function iniciar() {
 }
 
 iniciar();
+
+// Evita que el pellizco amplíe toda la página: el zoom solo actúa dentro del gráfico.
+(function bloquearZoomPagina() {
+  const noPagina = (e) => e.preventDefault();
+  ["gesturestart", "gesturechange", "gestureend"].forEach((t) => document.addEventListener(t, noPagina, { passive: false }));
+  document.addEventListener("touchmove", (e) => {
+    if (e.touches && e.touches.length > 1 && !(e.target.closest && e.target.closest("#grafico"))) e.preventDefault();
+  }, { passive: false });
+})();
