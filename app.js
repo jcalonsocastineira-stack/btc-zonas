@@ -1419,6 +1419,56 @@ function distanciaA(valor) {
   return " (" + fmtPct((mercado.eur / valor - 1) * 100) + ")";
 }
 
+function indicadoresCerrada() {
+  const ahora = Date.now() / 1000;
+  const cerradas = ana.d.filter((x) => x.time + 86400 <= ahora);
+  if (cerradas.length < 30) return null;
+  const original = ana.d;
+  ana.d = cerradas;
+  try {
+    return indicadores(cerradas[cerradas.length - 1].close);
+  } finally {
+    ana.d = original;
+  }
+}
+
+function resumenCerrada() {
+  const ind = indicadoresCerrada();
+  if (!ind) return null;
+  const s = evaluarSenal(ind);
+  const imp = importeRecomendado(ind, s);
+  let resultado = "Sin señal";
+  if (s.rota) resultado = (s.zonaRota ? s.zonaRota.nombre : "Zona") + " rota";
+  else if (s.compra) resultado = (s.fuerte ? "Señal FUERTE" : "Señal normal") + " en " + s.zona.nombre;
+  else if (s.cautela) resultado = "Con cautela: no se compra";
+  else if (s.senal && s.comprada) resultado = s.zona.nombre + " ya comprada";
+  if (s.pausa) resultado += " · pausa";
+  return { ind: ind, s: s, imp: imp, resultado: resultado, fecha: fechaBonita(new Date(ind.hoy.time * 1000).toISOString().slice(0, 10)) };
+}
+
+function pintarCerrada() {
+  const el = $("a-cerrada");
+  if (!el) return;
+  const r = resumenCerrada();
+  if (!r) {
+    el.innerHTML = "<div class=\"vacio\">Cargando velas…</div>";
+    return;
+  }
+  $("a-cerrada-fecha").textContent = r.fecha;
+  const v = r.ind.hoy;
+  const clase = r.s.compra ? "sube" : r.s.rota || r.s.pausa ? "baja" : "";
+  let html = filaHtml("<b>Resultado</b>", "<b>" + esc(r.resultado) + "</b>", clase);
+  if (r.s.compra) {
+    html += filaHtml("Importe del widget", r.s.importeWidget + " €");
+    html += filaHtml("Importe regla nueva", r.imp.importe ? r.imp.importe + " €" : "no compra", r.imp.importe ? "sube" : "");
+  }
+  html += filaHtml("Cierre · mínimo", miles(v.close) + " · " + miles(v.low) + " €");
+  html += filaHtml("Rechazo · confirmación", (r.s.rechazo ? "sí" : "no") + " (cierre al " + Math.round(r.s.posCierre * 100) + " %) · " + (r.s.confirmacion ? "sí" : "no") + " (RSI " + r.ind.rsiD.toLocaleString("es-ES", { maximumFractionDigits: 1 }) + ")");
+  html += filaHtml("Fuerza", "200 semanas " + marca(r.s.cerca200) + " · capitulación " + marca(r.s.capitulacion) + " (volumen " + r.ind.volRel.toLocaleString("es-ES", { maximumFractionDigits: 2 }) + "×)");
+  html += "<div class=\"vacio\">Confírmalo siempre en el widget (tócalo para actualizarlo).</div>";
+  el.innerHTML = html;
+}
+
 function pintarAnalisis() {
   const elSenal = $("a-senal");
   if (!elSenal) return;
@@ -1503,6 +1553,7 @@ function pintarAnalisis() {
       filaHtml("Prima de Coinbase", pct(d.primaCoinbase, 3), d.primaCoinbase >= 0 ? "sube" : "baja");
   }
 
+  pintarCerrada();
   pintarFib();
   pintarEscenarios();
   pintarSimulacion();
@@ -1615,6 +1666,8 @@ function textoParaClaude() {
   const f1 = (x) => (isFinite(x) ? x.toLocaleString("es-ES", { maximumFractionDigits: 1 }) : "—");
   l.push("BTC Zonas · " + ahora.toLocaleString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) + " (hora de España)");
   l.push("Precio: " + fmtEur(mercado.eur) + " (" + (mercado.fuente || "—") + ") · " + miles(mercado.usd) + " $ · 24 h " + fmtPct(mercado.cambio24));
+  const rc = resumenCerrada();
+  if (rc) l.push("Última vela cerrada (" + rc.fecha + "): " + rc.resultado + " · cierre " + miles(rc.ind.hoy.close) + " · mínimo " + miles(rc.ind.hoy.low) + (rc.s.compra ? " · widget " + rc.s.importeWidget + " € · regla nueva " + (rc.imp.importe ? rc.imp.importe + " €" : "no compra") : "") + " · RSI " + rc.ind.rsiD.toLocaleString("es-ES", { maximumFractionDigits: 1 }) + " · volumen " + rc.ind.volRel.toLocaleString("es-ES", { maximumFractionDigits: 2 }) + "×");
   const ind = indicadores();
   if (ind) {
     const v = ind.hoy;
