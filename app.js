@@ -2072,7 +2072,30 @@ function fotoParaVigilancia() {
   };
 }
 
+// Contenido comparable de una copia (sin la hora de envío): sirve para no reenviar lo mismo
+// y para saber si la vigilancia ya tiene exactamente lo que hay en la app.
+function contenidoSync(d) {
+  if (!d) return "";
+  const num = (x) => (x === null || x === undefined || x === "" || !isFinite(Number(x)) ? null : Math.round(Number(x)));
+  return JSON.stringify({
+    zonas: (d.zonas || []).map((z) => [String(z.id), num(z.min), num(z.max), z.estado, z.rearme ? [z.rearme.desde, num(z.rearme.umbral)] : null]),
+    resistencia: d.resistencia ? [num(d.resistencia.min), num(d.resistencia.max)] : null,
+    pausa: num(d.pausa),
+    eventos: (d.eventos || []).map((e) => [e.fecha, e.hora || "00:00", e.nombre]),
+    reanudar: Number(d.reanudar) || 0
+  });
+}
+
+function vigilanciaAlDia() {
+  const s = vig.estado && vig.estado.sincronizado;
+  return !!s && contenidoSync(s) === contenidoSync(fotoParaVigilancia());
+}
+
 async function enviarAVigilancia(manual) {
+  if (!manual && vigilanciaAlDia()) {
+    pintarSistema();
+    return true;
+  }
   const tema = temaControl();
   if (!tema) {
     if (manual) avisoTemporal("Primero guarda tu tema de ntfy en Bitácora → Sistema.", "atento");
@@ -2160,7 +2183,7 @@ function pintarSistema() {
   let estadoSync = "Sin enviar todavía";
   let clase = "baja";
   if (!tema) estadoSync = "Falta el tema de ntfy";
-  else if (enviado && sync >= enviado) {
+  else if (vigilanciaAlDia() || (enviado && sync >= enviado)) {
     estadoSync = "Al día";
     clase = "sube";
   } else if (enviado) {
