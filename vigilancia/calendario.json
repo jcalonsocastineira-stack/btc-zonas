@@ -1,0 +1,241 @@
+{
+ "nota": "Calendario macro automático (horas de España). Fuentes: BLS, BEA y Reserva Federal. Revisar cada año.",
+ "actualizado": "2026-11-23",
+ "eventos": [
+  {
+   "fecha": "2026-11-25",
+   "hora": "14:30",
+   "nombre": "PCE + PIB de EE. UU."
+  },
+  {
+   "fecha": "2026-12-04",
+   "hora": "14:30",
+   "nombre": "Empleo de EE. UU."
+  },
+  {
+   "fecha": "2026-12-09",
+   "hora": "20:00",
+   "nombre": "Decisión de tipos de la Fed"
+  },
+  {
+   "fecha": "2026-12-10",
+   "hora": "14:30",
+   "nombre": "IPC de EE. UU."
+  },
+  {
+   "fecha": "2026-12-23",
+   "hora": "14:30",
+   "nombre": "PCE de EE. UU."
+  },
+  {
+   "fecha": "2027-01-08",
+   "hora": "14:30",
+   "nombre": "Empleo de EE. UU."
+  },
+  {
+   "fecha": "2027-01-13",
+   "hora": "14:30",
+   "nombre": "IPC de EE. UU."
+  },
+  {
+   "fecha": "2027-01-27",
+   "hora": "20:00",
+   "nombre": "Decisión de tipos de la Fed"
+  },
+  {
+   "fecha": "2027-01-28",
+   "hora": "14:30",
+   "nombre": "PCE de EE. UU."
+  },
+  {
+   "fecha": "2027-02-05",
+   "hora": "14:30",
+   "nombre": "Empleo de EE. UU."
+  },
+  {
+   "fecha": "2027-02-11",
+   "hora": "14:30",
+   "nombre": "IPC de EE. UU."
+  },
+  {
+   "fecha": "2027-02-25",
+   "hora": "14:30",
+   "nombre": "PCE de EE. UU."
+  },
+  {
+   "fecha": "2027-03-05",
+   "hora": "14:30",
+   "nombre": "Empleo de EE. UU."
+  },
+  {
+   "fecha": "2027-03-10",
+   "hora": "14:30",
+   "nombre": "IPC de EE. UU."
+  },
+  {
+   "fecha": "2027-03-17",
+   "hora": "19:00",
+   "nombre": "Decisión de tipos de la Fed"
+  },
+  {
+   "fecha": "2027-03-31",
+   "hora": "14:30",
+   "nombre": "PCE de EE. UU."
+  },
+  {
+   "fecha": "2027-04-02",
+   "hora": "14:30",
+   "nombre": "Empleo de EE. UU."
+  },
+  {
+   "fecha": "2027-04-13",
+   "hora": "14:30",
+   "nombre": "IPC de EE. UU."
+  },
+  {
+   "fecha": "2027-04-28",
+   "hora": "20:00",
+   "nombre": "Decisión de tipos de la Fed"
+  },
+  {
+   "fecha": "2027-04-29",
+   "hora": "14:30",
+   "nombre": "PCE de EE. UU."
+  },
+  {
+   "fecha": "2027-05-07",
+   "hora": "14:30",
+   "nombre": "Empleo de EE. UU."
+  },
+  {
+   "fecha": "2027-05-12",
+   "hora": "14:30",
+   "nombre": "IPC de EE. UU."
+  },
+  {
+   "fecha": "2027-05-27",
+   "hora": "14:30",
+   "nombre": "PCE de EE. UU."
+  },
+  {
+   "fecha": "2027-06-04",
+   "hora": "14:30",
+   "nombre": "Empleo de EE. UU."
+  },
+  {
+   "fecha": "2027-06-09",
+   "hora": "20:00",
+   "nombre": "Decisión de tipos de la Fed"
+  },
+  {
+   "fecha": "2027-06-10",
+   "hora": "14:30",
+   "nombre": "IPC de EE. UU."
+  },
+  {
+   "fecha": "2027-06-25",
+   "hora": "14:30",
+   "nombre": "PCE de EE. UU."
+  },
+  {
+   "fecha": "2027-07-02",
+   "hora": "14:30",
+   "nombre": "Empleo de EE. UU."
+  },
+  {
+   "fecha": "2027-07-14",
+   "hora": "14:30",
+   "nombre": "IPC de EE. UU."
+  },
+  {
+   "fecha": "2027-07-28",
+   "hora": "20:00",
+   "nombre": "Decisión de tipos de la Fed"
+  },
+  {
+   "fecha": "2027-07-29",
+   "hora": "14:30",
+   "nombre": "PCE + PIB de EE. UU."
+  },
+  {
+   "fecha": "2027-08-06",
+   "hora": "14:30",
+   "nombre": "Empleo de EE. UU."
+  },
+  {
+   "fecha": "2027-08-11",
+   "hora": "14:30",
+   "nombre": "IPC de EE. UU."
+  },
+  {
+   "fecha": "2027-08-25",
+   "hora": "14:30",
+   "nombre": "PCE de EE. UU."
+  },
+  {
+   "fecha": "2027-09-03",
+   "hora": "14:30",
+   "nombre": "Empleo de EE. UU."
+  },
+  {
+   "fecha": "2027-09-14",
+   "hora": "14:30",
+   "nombre": "IPC de EE. UU."
+  },
+  {
+   "fecha": "2027-09-15",
+   "hora": "20:00",
+   "nombre": "Decisión de tipos de la Fed"
+  },
+  {
+   "fecha": "2027-09-30",
+   "hora": "14:30",
+   "nombre": "PCE de EE. UU."
+  },
+  {
+   "fecha": "2027-10-08",
+   "hora": "14:30",
+   "nombre": "Empleo de EE. UU."
+  },
+  {
+   "fecha": "2027-10-14",
+   "hora": "14:30",
+   "nombre": "IPC de EE. UU."
+  },
+  {
+   "fecha": "2027-10-28",
+   "hora": "14:30",
+   "nombre": "PCE + PIB de EE. UU."
+  },
+  {
+   "fecha": "2027-11-05",
+   "hora": "13:30",
+   "nombre": "Empleo de EE. UU."
+  },
+  {
+   "fecha": "2027-11-10",
+   "hora": "14:30",
+   "nombre": "IPC de EE. UU."
+  },
+  {
+   "fecha": "2027-11-17",
+   "hora": "20:00",
+   "nombre": "Decisión de tipos de la Fed"
+  },
+  {
+   "fecha": "2027-12-03",
+   "hora": "14:30",
+   "nombre": "Empleo de EE. UU."
+  },
+  {
+   "fecha": "2027-12-10",
+   "hora": "14:30",
+   "nombre": "IPC de EE. UU."
+  },
+  {
+   "fecha": "2027-12-22",
+   "hora": "14:30",
+   "nombre": "PCE de EE. UU."
+  }
+ ]
+}

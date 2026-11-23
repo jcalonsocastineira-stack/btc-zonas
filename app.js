@@ -1339,8 +1339,27 @@ function evaluarSenal(ind) {
   };
 }
 
+// Calendario macro automático (vigilancia/calendario.json): IPC, empleo, PCE y Fed con su hora de España.
+let calendarioAuto = [];
+try { calendarioAuto = JSON.parse(localStorage.getItem("btczonas.calendario") || "[]"); } catch (e) { calendarioAuto = []; }
+
+async function leerCalendario() {
+  try {
+    const r = await fetch("vigilancia/calendario.json?t=" + Date.now(), { cache: "no-store" });
+    if (!r.ok) return;
+    const j = await r.json();
+    if (Array.isArray(j.eventos)) {
+      calendarioAuto = j.eventos.map((e, i) => Object.assign({ id: "auto-" + i, auto: true }, e));
+      try { localStorage.setItem("btczonas.calendario", JSON.stringify(calendarioAuto)); } catch (e) {}
+      pintarEventos();
+      pintarAnalisis();
+    }
+  } catch (e) {}
+}
+
 function eventosOrdenados() {
-  return datos.eventos
+  const vistos = new Set(calendarioAuto.map((e) => e.fecha + " " + (e.hora || "00:00")));
+  return calendarioAuto.concat(datos.eventos.filter((e) => !vistos.has(e.fecha + " " + (e.hora || "00:00"))))
     .map((e) => Object.assign({}, e, { ts: Date.parse(e.fecha + "T" + (e.hora || "00:00")) }))
     .filter((e) => isFinite(e.ts))
     .sort((a, b) => a.ts - b.ts);
@@ -1622,7 +1641,7 @@ async function actualizarDerivados() {
 function pintarEventos() {
   const el = $("l-eventos");
   if (!el) return;
-  const lista = eventosOrdenados().filter((e) => e.ts > Date.now() - 3 * 86400000);
+  const lista = eventosOrdenados().filter((e) => e.ts > Date.now() - 3 * 86400000 && (!e.auto || e.ts < Date.now() + 45 * 86400000));
   if (lista.length === 0) {
     el.innerHTML = "<div class=\"vacio\">No hay datos macro apuntados.</div>";
     return;
@@ -1636,7 +1655,9 @@ function pintarEventos() {
     return "<div class=\"registro\">" +
       "<div class=\"titulo\"><span>" + esc(e.nombre) + "</span>" + estado + "</div>" +
       "<div class=\"detalle\">" + esc(cuandoEvento(e)) + "</div>" +
-      "<div class=\"acciones\"><button type=\"button\" class=\"peligro\" data-borrar-evento=\"" + esc(e.id) + "\">Borrar</button></div>" +
+      (e.auto
+        ? "<div class=\"detalle\">Automático · fuente oficial</div>"
+        : "<div class=\"acciones\"><button type=\"button\" class=\"peligro\" data-borrar-evento=\"" + esc(e.id) + "\">Borrar</button></div>") +
     "</div>";
   }).join("");
 }
@@ -2622,6 +2643,7 @@ function arrancarTemporizadores() {
     actualizarAnalisis();
     actualizarDerivados();
     leerVigilancia();
+    leerCalendario();
   }, 5 * 60000);
 }
 
@@ -2712,6 +2734,7 @@ function iniciar() {
       actualizarAnalisis();
       actualizarDerivados();
       leerVigilancia();
+      leerCalendario();
       conectarDirecto();
       arrancarTemporizadores();
       if (chart && $("v-grafico").classList.contains("activa")) cargarVelas();
@@ -2743,6 +2766,7 @@ function iniciar() {
     actualizarDerivados();
   });
   leerVigilancia();
+  leerCalendario();
   actualizarMiedo();
   conectarDirecto();
   arrancarTemporizadores();

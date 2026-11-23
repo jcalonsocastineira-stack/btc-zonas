@@ -15,6 +15,8 @@ const DIA = 86400;
 const SEMANA = 604800;
 
 const CONFIG = JSON.parse(fs.readFileSync(F_CONFIG, "utf8"));
+const F_CALENDARIO = path.join(DIR, "calendario.json");
+const CALENDARIO = fs.existsSync(F_CALENDARIO) ? (JSON.parse(fs.readFileSync(F_CALENDARIO, "utf8")).eventos || []) : [];
 const primeraVez = !fs.existsSync(F_ESTADO);
 const estado = primeraVez
   ? { ultimoCierre: 0, avisos: {}, rotas: {}, pausa: null }
@@ -41,7 +43,19 @@ let cambios = false;
 // La app manda una copia de zonas, eventos y niveles por el tema de control de ntfy; si existe, manda sobre config.json.
 const SYNC = () => estado.sincronizado || null;
 const ZONAS = () => (SYNC() && Array.isArray(SYNC().zonas) ? SYNC().zonas : CONFIG.zonas);
-const EVENTOS = () => (SYNC() && Array.isArray(SYNC().eventos) ? SYNC().eventos : CONFIG.eventos || []);
+const EVENTOS_MANUALES = () => (SYNC() && Array.isArray(SYNC().eventos) ? SYNC().eventos : CONFIG.eventos || []);
+// Calendario automático + datos apuntados a mano (si coinciden fecha y hora, manda el automático).
+const EVENTOS = () => {
+  const vistos = new Set(CALENDARIO.map((e) => e.fecha + " " + (e.hora || "00:00")));
+  return CALENDARIO.concat(EVENTOS_MANUALES().filter((e) => !vistos.has(e.fecha + " " + (e.hora || "00:00"))));
+};
+// Hora de España (CET/CEST) a segundos UTC.
+function tsEspana(fecha, hora) {
+  const guess = Date.parse(fecha + "T" + (hora || "00:00") + ":00Z");
+  const partes = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Madrid", hour: "2-digit", hourCycle: "h23" }).format(new Date(guess));
+  const off = ((Number(partes) - new Date(guess).getUTCHours()) + 24) % 24;
+  return guess / 1000 - off * 3600;
+}
 const PAUSA = () => (SYNC() && isFinite(SYNC().pausa) ? SYNC().pausa : CONFIG.pausa);
 const RESISTENCIA = () => (SYNC() && SYNC().resistencia ? SYNC().resistencia : CONFIG.resistencia);
 
@@ -270,7 +284,7 @@ function evaluar(ind) {
 
 function eventoCerca(desde, horas) {
   for (const e of EVENTOS()) {
-    const ts = Date.parse(e.fecha + "T" + (e.hora || "00:00") + ":00+01:00") / 1000;
+    const ts = tsEspana(e.fecha, e.hora);
     if (ts - desde > -3600 && ts - desde <= horas * 3600) return Object.assign({ ts }, e);
   }
   return null;
