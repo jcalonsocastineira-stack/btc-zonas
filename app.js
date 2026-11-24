@@ -1023,13 +1023,15 @@ function alternarLiquidaciones() {
 
 const FIB_R = [0.236, 0.382, 0.5, 0.618, 0.786];
 const CLAVE_FIB = "btczonas.fib";
-let mostrarFib = true;
+// Modo del botón Fib: "ciclo" (soportes de la gran subida), "bajada" (caída de 6 meses, como en TradingView) o "no".
+let modoFib = "ciclo";
 let lineasFib = [];
 
 try {
-  mostrarFib = localStorage.getItem(CLAVE_FIB) !== "no";
+  const g = localStorage.getItem(CLAVE_FIB);
+  modoFib = g === "no" ? "no" : g === "bajada" ? "bajada" : "ciclo";
 } catch (e) {
-  mostrarFib = true;
+  modoFib = "ciclo";
 }
 
 // Retroceso de Fibonacci del ciclo: última gran subida, del mínimo de nov. 2022 al máximo histórico de oct. 2025
@@ -1074,7 +1076,7 @@ function fibonacci() {
     sube: sube,
     alto: alto.high,
     bajo: bajo.low,
-    niveles: FIB_R.map((r) => ({ r: r, p: sube ? alto.high - r * rango : bajo.low + r * rango }))
+    niveles: FIB_R.map((r) => ({ r: r, p: alto.high - r * rango }))
   };
 }
 
@@ -1108,9 +1110,9 @@ function pintarFib() {
     "<div class=\"vacio\">Retroceso del ciclo: 0 % arriba = máximo " + fmtEur(c.alto) + " (" + esc(c.fechaAlto) + ") · 100 % abajo = mínimo " + fmtEur(c.bajo) + " (" + esc(c.fechaBajo) + "). Los niveles por debajo del precio son soportes; el 61,8 % es el más vigilado.</div>" +
     c.niveles.map(fila).join("");
   const f = fibonacci();
-  if (f && !f.sube) {
-    html += "<div class=\"vacio\" style=\"margin-top:10px\">Rebotes de la bajada de 6 meses (" + fmtEur(f.bajo) + " → " + fmtEur(f.alto) + "): posibles resistencias si sube.</div>" +
-      f.niveles.map((l) => filaHtml("<span class=\"sec\">" + pctFib(l.r) + "</span>", "<span class=\"sec\">" + fmtEur(l.p) + "</span>")).join("");
+  if (f) {
+    html += "<div class=\"vacio\" style=\"margin-top:10px\">" + (f.sube ? "Subida" : "Bajada") + " de los últimos 6 meses, como en TradingView: 0 % arriba = " + fmtEur(f.alto) + " · 100 % abajo = " + fmtEur(f.bajo) + ".</div>" +
+      f.niveles.map(fila).join("");
   }
   el.innerHTML = html;
 }
@@ -1126,13 +1128,25 @@ function dibujarFib() {
   }
   lineasFib = [];
   const boton = $("b-fib");
-  if (boton) boton.setAttribute("aria-pressed", mostrarFib ? "true" : "false");
-  if (!mostrarFib) return;
-  const c = fibCiclo();
-  for (const l of c.niveles) {
+  if (boton) {
+    boton.setAttribute("aria-pressed", modoFib === "no" ? "false" : "true");
+    boton.textContent = modoFib === "ciclo" ? "Fib ciclo" : modoFib === "bajada" ? "Fib 6 m" : "Fib";
+  }
+  if (modoFib === "no") return;
+  let niveles;
+  let extremos = [];
+  if (modoFib === "ciclo") {
+    niveles = fibCiclo().niveles;
+  } else {
+    const f = fibonacci();
+    if (!f) return;
+    niveles = f.niveles;
+    extremos = [{ r: 0, p: f.alto }, { r: 1, p: f.bajo }];
+  }
+  for (const l of extremos.concat(niveles)) {
     lineasFib.push(serieVelas.createPriceLine({
       price: l.p,
-      color: "rgba(232,170,70,0.75)",
+      color: l.r === 0 || l.r === 1 ? "rgba(160,160,160,0.6)" : "rgba(232,170,70,0.75)",
       lineWidth: l.r === 0.618 ? 2 : 1,
       lineStyle: 2,
       axisLabelVisible: true,
@@ -1142,9 +1156,9 @@ function dibujarFib() {
 }
 
 function alternarFib() {
-  mostrarFib = !mostrarFib;
+  modoFib = modoFib === "ciclo" ? "bajada" : modoFib === "bajada" ? "no" : "ciclo";
   try {
-    localStorage.setItem(CLAVE_FIB, mostrarFib ? "si" : "no");
+    localStorage.setItem(CLAVE_FIB, modoFib);
   } catch (e) {
     /* sin almacenamiento */
   }
@@ -1754,7 +1768,7 @@ function textoParaClaude() {
     const fc = fibCiclo();
     l.push("Fibonacci del ciclo (0 % máx. " + miles(fc.alto) + " · 100 % mín. " + miles(fc.bajo) + "): " + fc.niveles.map((n) => pctFib(n.r) + " " + miles(n.p) + " " + papelFib(n.p) + (zonaDeFib(n.p) ? " (" + zonaDeFib(n.p) + ")" : "")).join(" · "));
     const fib = fibonacci();
-    if (fib && !fib.sube) l.push("Rebotes de la bajada 6 meses (" + miles(fib.bajo) + "–" + miles(fib.alto) + "): " + fib.niveles.map((n) => pctFib(n.r) + " " + miles(n.p)).join(" · "));
+    if (fib) l.push("Fibonacci 6 meses (" + (fib.sube ? "subida" : "bajada") + ", 0 % arriba " + miles(fib.alto) + " · 100 % abajo " + miles(fib.bajo) + "): " + fib.niveles.map((n) => pctFib(n.r) + " " + miles(n.p) + " " + papelFib(n.p) + (zonaDeFib(n.p) ? " (" + zonaDeFib(n.p) + ")" : "")).join(" · "));
     l.push("Señal provisional: zona " + (s.zona ? s.zona.nombre + (s.rota ? " (cerraría rota)" : "") : "ninguna") +
       " · rechazo " + (s.rechazo ? "sí" : "no") + " (banda " + (s.toqueBanda ? "sí" : "no") + ", mecha " + f1((s.mecha / v.close) * 100) + " %, cierre al " + (isFinite(s.posCierre) ? Math.round(s.posCierre * 100) : "—") + " % del rango)" +
       " · confirmación " + (s.confirmacion ? "sí" : "no") +
