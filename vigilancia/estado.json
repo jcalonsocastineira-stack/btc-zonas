@@ -10,7 +10,7 @@
  "pausa": null,
  "rearmadas": {},
  "sincronizado": {
-  "ts": 1795397900347,
+  "ts": 1795534949044,
   "zonas": [
    {
     "id": "Z2",
@@ -57,13 +57,7 @@
     "estado": "activa"
    }
   ],
-  "eventos": [
-   {
-    "fecha": "2026-11-25",
-    "hora": "14:30",
-    "nombre": "PCE de EE. UU. (hora habitual, compruébala)"
-   }
-  ],
+  "eventos": [],
   "pausa": 50650,
   "resistencia": {
    "min": 73000,
