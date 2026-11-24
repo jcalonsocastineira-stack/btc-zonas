@@ -1032,6 +1032,32 @@ try {
   mostrarFib = true;
 }
 
+// Retroceso de Fibonacci del ciclo: última gran subida, del mínimo de nov. 2022 al máximo histórico de oct. 2025
+// (BTCEUR Bitstamp). Se dibuja como el retroceso clásico: 0 % arriba (máximo) y 100 % abajo (mínimo).
+// Si el precio marca un máximo nuevo, se usa ese máximo.
+const CICLO = { bajo: 15115, fechaBajo: "nov. 2022", alto: 107544, fechaAlto: "oct. 2025" };
+const FIB_CICLO = [0.236, 0.382, 0.5, 0.618, 0.705, 0.786];
+
+function fibCiclo() {
+  let alto = CICLO.alto;
+  let fechaAlto = CICLO.fechaAlto;
+  for (const x of ana.d) {
+    if (x.high > alto) {
+      alto = x.high;
+      fechaAlto = new Date(x.time * 1000).toLocaleDateString("es-ES", { month: "short", year: "numeric" });
+    }
+  }
+  const rango = alto - CICLO.bajo;
+  return {
+    alto: alto,
+    bajo: CICLO.bajo,
+    fechaAlto: fechaAlto,
+    fechaBajo: CICLO.fechaBajo,
+    niveles: FIB_CICLO.map((r) => ({ r: r, p: alto - r * rango }))
+  };
+}
+
+// Rebotes de los últimos 6 meses (método del widget): solo como mapa de resistencias.
 function fibonacci() {
   const ahora = Date.now() / 1000;
   const cerradas = ana.d.filter((x) => x.time + 86400 <= ahora).slice(-182);
@@ -1059,17 +1085,34 @@ function zonaDeFib(p) {
 
 const pctFib = (r) => (r * 100).toLocaleString("es-ES", { maximumFractionDigits: 1 }) + " %";
 
+function papelFib(p) {
+  const precio = ana.d.length ? ana.d[ana.d.length - 1].close : 0;
+  if (!precio) return "";
+  return p < precio ? "soporte" : "resistencia";
+}
+
 function pintarFib() {
   const el = $("a-fib");
   if (!el) return;
-  const f = fibonacci();
-  if (!f) {
+  if (!ana.d.length) {
     el.innerHTML = "<div class=\"vacio\">" + esc(ana.error || "Cargando velas…") + "</div>";
     return;
   }
-  el.innerHTML =
-    "<div class=\"vacio\">" + (f.sube ? "Retrocesos de la subida" : "Rebotes de la bajada") + " entre " + fmtEur(f.bajo) + " y " + fmtEur(f.alto) + ".</div>" +
-    f.niveles.map((l) => filaHtml(pctFib(l.r) + (zonaDeFib(l.p) ? " <span class=\"sec\">" + esc(zonaDeFib(l.p)) + "</span>" : ""), fmtEur(l.p) + distanciaA(l.p))).join("");
+  const c = fibCiclo();
+  const fila = (l) => {
+    const z = zonaDeFib(l.p);
+    const papel = papelFib(l.p);
+    return filaHtml(pctFib(l.r) + " <span class=\"sec\">" + esc(papel + (z ? " · " + z : "")) + "</span>", fmtEur(l.p) + distanciaA(l.p));
+  };
+  let html =
+    "<div class=\"vacio\">Retroceso del ciclo: 0 % arriba = máximo " + fmtEur(c.alto) + " (" + esc(c.fechaAlto) + ") · 100 % abajo = mínimo " + fmtEur(c.bajo) + " (" + esc(c.fechaBajo) + "). Los niveles por debajo del precio son soportes; el 61,8 % es el más vigilado.</div>" +
+    c.niveles.map(fila).join("");
+  const f = fibonacci();
+  if (f && !f.sube) {
+    html += "<div class=\"vacio\" style=\"margin-top:10px\">Rebotes de la bajada de 6 meses (" + fmtEur(f.bajo) + " → " + fmtEur(f.alto) + "): posibles resistencias si sube.</div>" +
+      f.niveles.map((l) => filaHtml("<span class=\"sec\">" + pctFib(l.r) + "</span>", "<span class=\"sec\">" + fmtEur(l.p) + "</span>")).join("");
+  }
+  el.innerHTML = html;
 }
 
 function dibujarFib() {
@@ -1085,13 +1128,12 @@ function dibujarFib() {
   const boton = $("b-fib");
   if (boton) boton.setAttribute("aria-pressed", mostrarFib ? "true" : "false");
   if (!mostrarFib) return;
-  const f = fibonacci();
-  if (!f) return;
-  for (const l of f.niveles) {
+  const c = fibCiclo();
+  for (const l of c.niveles) {
     lineasFib.push(serieVelas.createPriceLine({
       price: l.p,
       color: "rgba(232,170,70,0.75)",
-      lineWidth: 1,
+      lineWidth: l.r === 0.618 ? 2 : 1,
       lineStyle: 2,
       axisLabelVisible: true,
       title: "Fib " + pctFib(l.r)
@@ -1709,8 +1751,10 @@ function textoParaClaude() {
     l.push("RSI diario " + f1(ind.rsiD) + " · RSI semanal " + f1(ind.rsiW) + " · Bollinger diario " + miles(ind.bbInf) + " / " + miles(ind.bbMed) + " / " + miles(ind.bbSup));
     l.push("Medias: 200 d " + miles(ind.ma200d) + distanciaA(ind.ma200d) + " · 20 sem " + miles(ind.ma20w) + distanciaA(ind.ma20w) + " · 200 sem " + miles(ind.ma200w) + distanciaA(ind.ma200w));
     l.push("Retroceso desde máx. 182 d (" + miles(ind.max182) + "): " + f1(ind.retroceso) + " %");
+    const fc = fibCiclo();
+    l.push("Fibonacci del ciclo (0 % máx. " + miles(fc.alto) + " · 100 % mín. " + miles(fc.bajo) + "): " + fc.niveles.map((n) => pctFib(n.r) + " " + miles(n.p) + " " + papelFib(n.p) + (zonaDeFib(n.p) ? " (" + zonaDeFib(n.p) + ")" : "")).join(" · "));
     const fib = fibonacci();
-    if (fib) l.push("Fibonacci 6 meses (" + (fib.sube ? "retrocesos de la subida " : "rebotes de la bajada ") + miles(fib.bajo) + "–" + miles(fib.alto) + "): " + fib.niveles.map((n) => pctFib(n.r) + " " + miles(n.p) + (zonaDeFib(n.p) ? " (" + zonaDeFib(n.p) + ")" : "")).join(" · "));
+    if (fib && !fib.sube) l.push("Rebotes de la bajada 6 meses (" + miles(fib.bajo) + "–" + miles(fib.alto) + "): " + fib.niveles.map((n) => pctFib(n.r) + " " + miles(n.p)).join(" · "));
     l.push("Señal provisional: zona " + (s.zona ? s.zona.nombre + (s.rota ? " (cerraría rota)" : "") : "ninguna") +
       " · rechazo " + (s.rechazo ? "sí" : "no") + " (banda " + (s.toqueBanda ? "sí" : "no") + ", mecha " + f1((s.mecha / v.close) * 100) + " %, cierre al " + (isFinite(s.posCierre) ? Math.round(s.posCierre * 100) : "—") + " % del rango)" +
       " · confirmación " + (s.confirmacion ? "sí" : "no") +
