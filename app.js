@@ -15,21 +15,21 @@ const DATOS_SISTEMA = {
     { id: "z2", nombre: "Z2", tipo: "zona", min: 69400, max: 71000, estado: "comprada", nota: "Comprada el 25 oct" },
     { id: "z3", nombre: "Z3", tipo: "zona", min: 63200, max: 66700, estado: "rota", nota: "Rota el 13 nov" },
     { id: "z4", nombre: "Z4", tipo: "zona", min: 58500, max: 62300, estado: "rota", nota: "Rota el 14 nov. Se reactiva con 2 cierres seguidos por encima de 59.500 €" },
-    { id: "z5", nombre: "Z5", tipo: "zona", min: 55500, max: 57500, estado: "rota", nota: "Comprada el 16 nov. Rota el 20 nov (cierre 53.688 €)" },
-    { id: "z6", nombre: "Z6", tipo: "zona", min: 50700, max: 52500, estado: "activa", nota: "Doble suelo mensual, Fibonacci 100 % en 50.822 €, banda inferior semanal en unos 49.430 €" },
+    { id: "z5", nombre: "Z5", tipo: "zona", min: 55500, max: 57500, estado: "rota", nota: "Comprada el 16 nov. Rota el 20 nov (cierre 53.688 €). Ahora hace de resistencia" },
+    { id: "z6", nombre: "Z6", tipo: "zona", min: 50700, max: 52500, estado: "comprada", nota: "Comprada el 22 nov (señal fuerte de la vela del 21). Fibonacci 61,8 % del ciclo en 50.423 €" },
+    { id: "z7", nombre: "Z7", tipo: "zona", min: 47400, max: 49500, estado: "activa", nota: "Banda inferior de Bollinger semanal + mínimos de sep. 2024. Solo con Reanudar (queda bajo la pausa)" },
     { id: "res", nombre: "Resistencia", tipo: "resistencia", min: 73000, max: 74600, estado: "activa", nota: "" },
-    { id: "pausa", nombre: "Pausa", tipo: "pausa", min: 50650, max: null, estado: "activa", nota: "El widget se pausa si una vela cierra por debajo" }
+    { id: "pausa", nombre: "Pausa", tipo: "pausa", min: 50650, max: null, estado: "activa", nota: "Sin compras automáticas si una vela cierra por debajo, hasta tocar Reanudar" }
   ],
   compras: [
     { id: "c1", fecha: "2026-10-10", precio: 74139.97, btc: 0.000674, total: 50.97, comision: 1, nota: "Antes del sistema", zona: "" },
     { id: "c2", fecha: "2026-10-25", precio: 72605.57, btc: 0.000275, total: 20.97, comision: 1, nota: "Z2", zona: "z2" },
     { id: "c3", fecha: "2026-10-31", precio: 69721.29, btc: 0.000286, total: 20.94, comision: 1, nota: "Z3", zona: "z3" },
-    { id: "c4", fecha: "2026-11-16", precio: 59213.25, btc: 0.000675, total: 40.97, comision: 1, nota: "Z5 señal fuerte", zona: "z5" }
+    { id: "c4", fecha: "2026-11-16", precio: 59213.25, btc: 0.000675, total: 40.97, comision: 1, nota: "Z5 señal fuerte", zona: "z5" },
+    { id: "c5", fecha: "2026-11-22", precio: 54998.1, btc: 0.00090458, total: 50, comision: 0.25, nota: "Z6 señal fuerte · Bit2Me Pro, limitada", zona: "z6" }
   ],
   notas: [],
-  eventos: [
-    { id: "pce-nov", fecha: "2026-11-25", hora: "14:30", nombre: "PCE de EE. UU. (hora habitual, compruébala)" }
-  ]
+  eventos: []
 };
 
 const TITULOS = { panel: "Panel", grafico: "Gráfico", analisis: "Análisis", calc: "Calculadora", bitacora: "Bitácora" };
@@ -2663,7 +2663,7 @@ function importar(ev) {
 }
 
 function restaurarSistema() {
-  if (!window.confirm("Esto sustituye tus datos actuales por las zonas y compras del sistema (21 nov 2026). ¿Continuar?")) return;
+  if (!window.confirm("Esto sustituye tus datos actuales por las zonas y compras del sistema (24 nov 2026). ¿Continuar?")) return;
   datos = copiaSistema();
   if (guardar()) {
     avisoTemporal("Datos del sistema restaurados.", "ok");
