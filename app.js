@@ -26,7 +26,8 @@ const DATOS_SISTEMA = {
     { id: "c2", fecha: "2026-10-25", precio: 72605.57, btc: 0.000275, total: 20.97, comision: 1, nota: "Z2", zona: "z2" },
     { id: "c3", fecha: "2026-10-31", precio: 69721.29, btc: 0.000286, total: 20.94, comision: 1, nota: "Z3", zona: "z3" },
     { id: "c4", fecha: "2026-11-16", precio: 59213.25, btc: 0.000675, total: 40.97, comision: 1, nota: "Z5 señal fuerte", zona: "z5" },
-    { id: "c5", fecha: "2026-11-22", precio: 54998.1, btc: 0.00090458, total: 50, comision: 0.25, nota: "Z6 señal fuerte · Bit2Me Pro, limitada", zona: "z6" }
+    { id: "c5", fecha: "2026-11-22", precio: 54998.1, btc: 0.00090458, total: 50, comision: 0.25, nota: "Z6 señal fuerte · Bit2Me Pro, limitada", zona: "z6" },
+    { id: "c6", fecha: "2026-11-25", precio: 52485.1, btc: 0.0009467, total: 49.99, comision: 0.3, nota: "Fuera del plan · Bit2Me Pro (taker 0,6 %)", zona: "" }
   ],
   notas: [],
   eventos: []
@@ -1336,6 +1337,45 @@ function conPrecioVivo(velasOrigen, duracion, precio) {
   return copia;
 }
 
+// ---- Indicadores en observación (no deciden): CM Williams Vix Fix y WaveTrend (LazyBear) ----
+function emaSerie(v, n) {
+  const k = 2 / (n + 1);
+  const out = [];
+  let e = NaN;
+  for (const x of v) {
+    e = isFinite(e) ? x * k + e * (1 - k) : x;
+    out.push(e);
+  }
+  return out;
+}
+
+function vixFix(hs, ls, cs) {
+  const wvf = [];
+  for (let i = 0; i < cs.length; i++) {
+    if (i < 21) { wvf.push(NaN); continue; }
+    let hc = 0;
+    for (let j = i - 21; j <= i; j++) if (cs[j] > hc) hc = cs[j];
+    wvf.push(((hc - ls[i]) / hc) * 100);
+  }
+  const n = wvf.length - 1;
+  if (n < 75) return { valor: NaN, alerta: false };
+  const u20 = wvf.slice(n - 19, n + 1);
+  const m = u20.reduce((s, x) => s + x, 0) / 20;
+  const sd = Math.sqrt(u20.reduce((s, x) => s + (x - m) * (x - m), 0) / 19);
+  const max50 = Math.max.apply(null, wvf.slice(n - 49, n + 1));
+  return { valor: wvf[n], alerta: wvf[n] >= m + 2 * sd || wvf[n] >= max50 * 0.85 };
+}
+
+function waveTrend(hs, ls, cs) {
+  if (cs.length < 60) return NaN;
+  const ap = cs.map((c, i) => (hs[i] + ls[i] + c) / 3);
+  const esa = emaSerie(ap, 10);
+  const d = emaSerie(ap.map((x, i) => Math.abs(x - esa[i])), 10);
+  const ci = ap.map((x, i) => (d[i] > 0 ? (x - esa[i]) / (0.015 * d[i]) : 0));
+  const wt1 = emaSerie(ci, 21);
+  return wt1[wt1.length - 1];
+}
+
 function rsiWilder(cierres, n) {
   if (cierres.length < n + 1) return NaN;
   let ganancia = 0;
@@ -1436,6 +1476,8 @@ function indicadores(precio) {
     volMedia: volMedia,
     atr: atr,
     adx: adx,
+    vix: vixFix(d.map((x) => x.high), d.map((x) => x.low), cd),
+    wt: waveTrend(d.map((x) => x.high), d.map((x) => x.low), cd),
     ma200d: mediaUltimos(cd, 200),
     ma20w: mediaUltimos(cwc, 20),
     ma200w: mediaUltimos(cwc, 200),
@@ -1697,6 +1739,7 @@ function pintarAnalisis() {
       " · volumen " + ind.volRel.toLocaleString("es-ES", { maximumFractionDigits: 2 }) + "× " + marca(s.confirmacion));
     html += filaHtml("Fuerza", "200 semanas (≤ 3 %) " + marca(s.cerca200) + " · capitulación " + marca(s.capitulacion) + " · tendencia " + (s.bajista ? "bajista" : "normal"));
     html += filaHtml("ADX > 25 <span class=\"sec\">en observación, no decide</span>", ind.adx.toLocaleString("es-ES", { maximumFractionDigits: 1 }) + " " + marca(ind.adx > 25));
+    html += filaHtml("Vix Fix · WaveTrend < −60 <span class=\"sec\">en observación, no deciden</span>", (ind.vix.alerta ? "pánico" : "normal") + " " + marca(ind.vix.alerta) + " · " + ind.wt.toLocaleString("es-ES", { maximumFractionDigits: 0 }) + " " + marca(ind.wt < -60));
     let resultado = "Sin señal";
     let clase = "baja";
     if (s.senal && s.pausada && !s.comprada) {
@@ -1732,6 +1775,8 @@ function pintarAnalisis() {
       filaHtml("Bollinger diario", miles(ind.bbInf) + " / " + miles(ind.bbMed) + " / " + miles(ind.bbSup) + " €") +
       filaHtml("Volumen hoy <span class=\"sec\">media 20 d " + f1(ind.volMedia) + " BTC</span>", f1(v.vol) + " BTC (" + ind.volRel.toLocaleString("es-ES", { maximumFractionDigits: 2 }) + "×)") +
       filaHtml("ADX 14 <span class=\"sec\">en observación</span>", f1(ind.adx) + (ind.adx > 40 ? " · tendencia muy fuerte" : ind.adx > 25 ? " · tendencia fuerte" : " · tendencia débil"), ind.adx > 25 ? "sube" : "") +
+      filaHtml("Vix Fix <span class=\"sec\">en observación · pánico vendedor</span>", f1(ind.vix.valor) + (ind.vix.alerta ? " · en alerta" : " · normal"), ind.vix.alerta ? "sube" : "") +
+      filaHtml("WaveTrend <span class=\"sec\">en observación · < −60 sobreventa extrema</span>", f1(ind.wt) + (ind.wt < -60 ? " · sobreventa extrema" : ind.wt < -53 ? " · sobreventa" : ""), ind.wt < -60 ? "sube" : "") +
       filaHtml("Media 200 días", fmtEur(ind.ma200d) + distanciaA(ind.ma200d)) +
       filaHtml("Media 20 semanas", fmtEur(ind.ma20w) + distanciaA(ind.ma20w)) +
       filaHtml("Media 200 semanas", fmtEur(ind.ma200w) + distanciaA(ind.ma200w)) +
@@ -1876,7 +1921,7 @@ function textoParaClaude() {
     const v = ind.hoy;
     const s = evaluarSenal(ind);
     l.push("Vela diaria en curso (cierra en " + $("p-cierre").textContent + "): apertura " + miles(v.open) + " · máx " + miles(v.high) + " · mín " + miles(v.low) + " · actual " + miles(v.close) + " · volumen " + f1(v.vol) + " BTC (" + ind.volRel.toLocaleString("es-ES", { maximumFractionDigits: 2 }) + "× media 20 d)");
-    l.push("ADX 14 (en observación): " + f1(ind.adx));
+    l.push("ADX 14 (en observación): " + f1(ind.adx) + " · Vix Fix (en observación): " + f1(ind.vix.valor) + (ind.vix.alerta ? " en alerta" : " normal") + " · WaveTrend (en observación): " + f1(ind.wt));
     l.push("RSI diario " + f1(ind.rsiD) + " · RSI semanal " + f1(ind.rsiW) + " · Bollinger diario " + miles(ind.bbInf) + " / " + miles(ind.bbMed) + " / " + miles(ind.bbSup));
     l.push("Medias: 200 d " + miles(ind.ma200d) + distanciaA(ind.ma200d) + " · 20 sem " + miles(ind.ma20w) + distanciaA(ind.ma20w) + " · 200 sem " + miles(ind.ma200w) + distanciaA(ind.ma200w));
     l.push("Retroceso desde máx. 182 d (" + miles(ind.max182) + "): " + f1(ind.retroceso) + " %");
@@ -2778,7 +2823,7 @@ function importar(ev) {
 }
 
 function restaurarSistema() {
-  if (!window.confirm("Esto sustituye tus datos actuales por las zonas y compras del sistema (24 nov 2026). ¿Continuar?")) return;
+  if (!window.confirm("Esto sustituye tus datos actuales por las zonas y compras del sistema (25 nov 2026). ¿Continuar?")) return;
   datos = copiaSistema();
   if (guardar()) {
     avisoTemporal("Datos del sistema restaurados.", "ok");

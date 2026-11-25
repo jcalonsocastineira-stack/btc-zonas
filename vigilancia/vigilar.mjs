@@ -167,6 +167,45 @@ function rsi(c, n = 14) {
 
 const media = (a, n) => (a.length >= n ? a.slice(-n).reduce((s, x) => s + x, 0) / n : NaN);
 
+// ---- Indicadores en observación (no deciden): CM Williams Vix Fix y WaveTrend (LazyBear) ----
+function emaSerie(v, n) {
+  const k = 2 / (n + 1);
+  const out = [];
+  let e = NaN;
+  for (const x of v) {
+    e = isFinite(e) ? x * k + e * (1 - k) : x;
+    out.push(e);
+  }
+  return out;
+}
+
+function vixFix(hs, ls, cs) {
+  const wvf = [];
+  for (let i = 0; i < cs.length; i++) {
+    if (i < 21) { wvf.push(NaN); continue; }
+    let hc = 0;
+    for (let j = i - 21; j <= i; j++) if (cs[j] > hc) hc = cs[j];
+    wvf.push(((hc - ls[i]) / hc) * 100);
+  }
+  const n = wvf.length - 1;
+  if (n < 75) return { valor: NaN, alerta: false };
+  const u20 = wvf.slice(n - 19, n + 1);
+  const m = u20.reduce((s, x) => s + x, 0) / 20;
+  const sd = Math.sqrt(u20.reduce((s, x) => s + (x - m) * (x - m), 0) / 19);
+  const max50 = Math.max.apply(null, wvf.slice(n - 49, n + 1));
+  return { valor: wvf[n], alerta: wvf[n] >= m + 2 * sd || wvf[n] >= max50 * 0.85 };
+}
+
+function waveTrend(hs, ls, cs) {
+  if (cs.length < 60) return NaN;
+  const ap = cs.map((c, i) => (hs[i] + ls[i] + c) / 3);
+  const esa = emaSerie(ap, 10);
+  const d = emaSerie(ap.map((x, i) => Math.abs(x - esa[i])), 10);
+  const ci = ap.map((x, i) => (d[i] > 0 ? (x - esa[i]) / (0.015 * d[i]) : 0));
+  const wt1 = emaSerie(ci, 21);
+  return wt1[wt1.length - 1];
+}
+
 function indicadoresEn(dias, i, semanas) {
   const d = dias.slice(0, i + 1);
   const x = d[d.length - 1];
@@ -225,6 +264,8 @@ function indicadoresEn(dias, i, semanas) {
     volRel: x.v / media(d.map((y) => y.v), 20),
     atr: atr,
     adx: adx,
+    vix: vixFix(d.map((y) => y.h), d.map((y) => y.l), c),
+    wt: waveTrend(d.map((y) => y.h), d.map((y) => y.l), c),
     sma200: media(c, 200),
     ma20w: media(cw, 20),
     ma200w: media(cw, 200),
@@ -307,7 +348,7 @@ function resumen(ind, s) {
 }
 
 // ---------- registro ----------
-const CABECERA = "fecha,cierre,minimo,zona,resultado,importe_widget,importe_regla,rsi,vol_rel,cerca200,capitulacion,bajista,cierre_30d,rent_30d,cierre_90d,rent_90d,adx";
+const CABECERA = "fecha,cierre,minimo,zona,resultado,importe_widget,importe_regla,rsi,vol_rel,cerca200,capitulacion,bajista,cierre_30d,rent_30d,cierre_90d,rent_90d,adx,vixfix,wt1";
 
 function leerRegistro() {
   if (!fs.existsSync(F_REGISTRO)) return [];
@@ -403,7 +444,8 @@ async function main() {
     }
 
     const fila = [dia(x.t), Math.round(x.c), Math.round(x.l), s.zona ? s.zona.id : "", textoResultado(s), s.importeWidget, regla,
-      ind.rsi.toFixed(1), ind.volRel.toFixed(2), s.cerca200 ? 1 : 0, s.capitulacion ? 1 : 0, s.bajista ? 1 : 0, "", "", "", "", isFinite(ind.adx) ? ind.adx.toFixed(1) : ""];
+      ind.rsi.toFixed(1), ind.volRel.toFixed(2), s.cerca200 ? 1 : 0, s.capitulacion ? 1 : 0, s.bajista ? 1 : 0, "", "", "", "", isFinite(ind.adx) ? ind.adx.toFixed(1) : "",
+      ind.vix && isFinite(ind.vix.valor) ? (ind.vix.alerta ? 1 : 0) : "", isFinite(ind.wt) ? ind.wt.toFixed(1) : ""];
     const k = registro.findIndex((r) => r[0] === fila[0]);
     if (k >= 0) registro[k] = fila;
     else registro.push(fila);
