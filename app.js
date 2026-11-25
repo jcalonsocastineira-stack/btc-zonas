@@ -1800,7 +1800,7 @@ function textoParaClaude() {
   if (rearmes.length) l.push("Rearme: " + rearmes.join(" · "));
   const proximos = eventosOrdenados().filter((e) => e.ts > Date.now() - 3600000).slice(0, 4).map((e) => e.nombre + " " + cuandoEvento(e));
   const pv = pausaActiva();
-  l.push("Sistema: compras " + (pv ? "EN PAUSA desde el " + fechaBonita(pv.fecha) : "activas") + " · vigilancia " + (vig.estado && vig.estado.sincronizado && vig.estado.sincronizado.ts >= (Number(leerLocal(CLAVE_ULTIMO_ENVIO)) || 0) ? "al día" : "pendiente de sincronizar"));
+  l.push("Sistema: compras " + (pv ? "EN PAUSA desde el " + fechaBonita(pv.fecha) : "activas") + " · vigilancia " + (vigilanciaAlDia() || (vig.estado && vig.estado.sincronizado && vig.estado.sincronizado.ts >= (Number(leerLocal(CLAVE_ULTIMO_ENVIO)) || 0)) ? "al día" : "pendiente de sincronizar"));
   l.push("Datos macro apuntados: " + (proximos.length ? proximos.join(" · ") : "ninguno"));
   const r = resumenCartera();
   const valorActual = r.btc * mercado.eur;
