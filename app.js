@@ -737,6 +737,7 @@ function construirSeries() {
   dibujarLiquidaciones();
   lineasFib = [];
   dibujarFib();
+  dibujarIndicadores();
 
   if (ajustarVista) {
     const barras = intervalo === 1440 ? 90 : 60;
@@ -750,6 +751,119 @@ function centrarGrafico() {
   const barras = intervalo === 1440 ? 90 : 60;
   chart.priceScale("right").applyOptions({ autoScale: true });
   chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, velas.length - barras), to: velas.length + 3 });
+}
+
+/* ---------- indicadores en el gráfico: medias y RSI ---------- */
+
+const CLAVE_IND = "btczonas.ind";
+let mostrarInd = true;
+try { mostrarInd = localStorage.getItem(CLAVE_IND) !== "no"; } catch (e) { mostrarInd = true; }
+let seriesInd = [];
+
+function serieRsi(v, n) {
+  const out = [];
+  if (v.length < n + 1) return out;
+  let g = 0, p = 0;
+  for (let i = 1; i <= n; i++) {
+    const d = v[i].close - v[i - 1].close;
+    if (d > 0) g += d; else p -= d;
+  }
+  let mg = g / n, mp = p / n;
+  out.push({ time: v[n].time, value: mp === 0 ? 100 : 100 - 100 / (1 + mg / mp) });
+  for (let i = n + 1; i < v.length; i++) {
+    const d = v[i].close - v[i - 1].close;
+    mg = (mg * (n - 1) + Math.max(d, 0)) / n;
+    mp = (mp * (n - 1) + Math.max(-d, 0)) / n;
+    out.push({ time: v[i].time, value: mp === 0 ? 100 : 100 - 100 / (1 + mg / mp) });
+  }
+  return out;
+}
+
+function serieMedia(v, n) {
+  const out = [];
+  let suma = 0;
+  for (let i = 0; i < v.length; i++) {
+    suma += v[i].close;
+    if (i >= n) suma -= v[i - n].close;
+    if (i >= n - 1) out.push({ time: v[i].time, value: suma / n });
+  }
+  return out;
+}
+
+// Media semanal (solo semanas cerradas) llevada a las velas diarias, como la usa la regla.
+function mediaSemanalEnDiario(n) {
+  const sem = ana.w || [];
+  if (sem.length < n) return [];
+  const medias = serieMedia(sem, n); // valor de la semana que empieza en time
+  const out = [];
+  let j = -1;
+  for (const v of velas) {
+    while (j + 1 < medias.length && medias[j + 1].time + 7 * 86400 <= v.time) j++;
+    if (j >= 0) out.push({ time: v.time, value: medias[j].value });
+  }
+  return out;
+}
+
+function dibujarIndicadores() {
+  if (!chart) return;
+  for (const s of seriesInd) {
+    try { chart.removeSeries(s); } catch (e) { /* ya no existe */ }
+  }
+  seriesInd = [];
+  const boton = $("b-ind");
+  if (boton) boton.setAttribute("aria-pressed", mostrarInd ? "true" : "false");
+  chart.applyOptions({ rightPriceScale: { scaleMargins: mostrarInd ? { top: 0.05, bottom: 0.36 } : { top: 0.06, bottom: 0.22 } } });
+  try { chart.priceScale("vol").applyOptions({ scaleMargins: mostrarInd ? { top: 0.88, bottom: 0 } : { top: 0.82, bottom: 0 } }); } catch (e) { /* sin volumen */ }
+  if (!mostrarInd || velas.length === 0) return;
+
+  const diario = intervalo === 1440;
+  const lineas = diario
+    ? [
+        { datos: serieMedia(velas, 200), color: "#c58af9", ancho: 2, titulo: "MA 200 d" },
+        { datos: mediaSemanalEnDiario(20), color: "#5fb3b3", ancho: 1, titulo: "MA 20 sem" },
+        { datos: mediaSemanalEnDiario(200), color: "#f2f2f2", ancho: 2, titulo: "MA 200 sem" }
+      ]
+    : [
+        { datos: serieMedia(velas, 20), color: "#5fb3b3", ancho: 1, titulo: "MA 20 sem" },
+        { datos: serieMedia(velas, 200), color: "#f2f2f2", ancho: 2, titulo: "MA 200 sem" }
+      ];
+  for (const l of lineas) {
+    if (!l.datos.length) continue;
+    const s = chart.addLineSeries({
+      color: l.color,
+      lineWidth: l.ancho,
+      priceLineVisible: false,
+      lastValueVisible: true,
+      title: l.titulo,
+      crosshairMarkerVisible: false,
+      autoscaleInfoProvider: () => null
+    });
+    s.setData(l.datos);
+    seriesInd.push(s);
+  }
+
+  const rsi = chart.addLineSeries({
+    priceScaleId: "rsi",
+    color: "#b388ff",
+    lineWidth: 1,
+    priceLineVisible: false,
+    lastValueVisible: true,
+    title: "RSI",
+    crosshairMarkerVisible: false,
+    priceFormat: { type: "price", precision: 1, minMove: 0.1 },
+    autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } })
+  });
+  chart.priceScale("rsi").applyOptions({ scaleMargins: { top: 0.67, bottom: 0.14 }, borderVisible: false });
+  rsi.setData(serieRsi(velas, 14));
+  rsi.createPriceLine({ price: 70, color: "rgba(226,75,74,0.5)", lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: "" });
+  rsi.createPriceLine({ price: 30, color: "rgba(29,158,117,0.6)", lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: "" });
+  seriesInd.push(rsi);
+}
+
+function alternarInd() {
+  mostrarInd = !mostrarInd;
+  try { localStorage.setItem(CLAVE_IND, mostrarInd ? "si" : "no"); } catch (e) { /* sin almacenamiento */ }
+  dibujarIndicadores();
 }
 
 async function cargarVelas() {
@@ -1205,6 +1319,7 @@ async function actualizarAnalisis() {
   revisarRearme();
   pintarAnalisis();
   dibujarFib();
+  if (intervalo === 1440) dibujarIndicadores();
 }
 
 function conPrecioVivo(velasOrigen, duracion, precio) {
@@ -2770,6 +2885,7 @@ function iniciar() {
   });
   $("b-liq").addEventListener("click", alternarLiquidaciones);
   $("b-fib").addEventListener("click", alternarFib);
+  $("b-ind").addEventListener("click", alternarInd);
 
   ["c-importe", "c-comision", "c-entrada", "c-inval", "c-objetivo"].forEach((id) => $(id).addEventListener("input", calcular));
   document.querySelectorAll("[data-importe]").forEach((b) => b.addEventListener("click", () => {
